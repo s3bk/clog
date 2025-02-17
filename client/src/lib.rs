@@ -249,7 +249,12 @@ impl FilterView {
     }
 
     pub fn set_filter(&mut self, filter: JsValue) -> Result<(), JsValue> {
-        self.filter = serde_wasm_bindgen::from_value(filter)?;
+        if let Some(s) = filter.as_string() {
+            let filter = Filter::parse(&s).map_err(|e| JsValue::from_str(&e.to_string()))?;
+            self.filter = Some(filter);
+        } else {
+            self.filter = serde_wasm_bindgen::from_value(filter)?;
+        }
         Ok(())
     }
 

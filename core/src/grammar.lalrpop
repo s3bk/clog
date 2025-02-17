@@ -1,0 +1,61 @@
+use std::str::FromStr;
+use crate::filter::*;
+use lalrpop_util::ParseError;
+
+grammar;
+
+extern {
+    type Error = FilterParseError;
+}
+
+Num: u16 = <s:r"[0-9]+"> => u16::from_str(s).unwrap();
+pub SimpleLit: &'input str = <l:r#"[a-zA-Z\/\?\+\-_\.\:=\&]+"#> => l;
+pub Str: String = <lo:@L> <l:r#""(\\\\|\\"|[^"\\])*""#> =>? apply_string_escapes(&l[1..l.len()-1], lo + 1);
+
+pub Lit: String = {
+    <s:SimpleLit> => s.into(),
+    <s:Str> => s,
+};
+
+Regex: Regex =  <l:r#""(\\\\|\\"|[^"\\])*""#> =>? Regex::new(l).map_err(|e| ParseError::User { error: FilterParseError::Regex(e) });
+
+StringFilter: StringFilter = {
+    <s:Lit> => StringFilter::Equals(s),
+    <s:Lit> "*" => StringFilter::Prefix(s),
+    "*" <s:Lit> => StringFilter::Suffix(s),
+    "*" <s:Lit> "*" => StringFilter::Contains(s),
+    "~" <s:Regex> => StringFilter::Regex(s),
+};
+
+NumberFilter: NumberFilter<u16> = {
+    <a:Num> => NumberFilter::Equals(a),
+    <a:Num> ".." <b:Num> => NumberFilter::Range(a, b),
+    ">" <a:Num> => NumberFilter::Range(a+1, u16::MAX),
+    ">=" <a:Num> => NumberFilter::Range(a, u16::MAX),
+    "<" <a:Num> => NumberFilter::Range(0, a),
+    "<=" <a:Num> => NumberFilter::Range(0, a+1),
+};
+
+Combination: Combinations = {
+    "!" <f:Filter> => Combinations::Not(f),
+    <a:Filter> "&" <b:Filter> => Combinations::And(vec![a, b]),
+    <a:Filter> "|" <b:Filter> => Combinations::Or(vec![a, b]),
+    <a:Filter> "^" <b:Filter> => Combinations::Xor(vec![a, b]),
+}
+
+Field: FieldFilter = {
+    "port" <n:NumberFilter> => FieldFilter::Port(n),
+    "status" <n:NumberFilter> => FieldFilter::Status(n),
+    "uri" <f:StringFilter> => FieldFilter::Uri(f),
+    "ua" <f:StringFilter> => FieldFilter::UserAgent(f),
+};
+
+Filter: Filter = {
+    <f:Field> => Filter::Field(f),
+    "(" <c:Combination> ")" => Filter::Combination(Box::new(c))
+};
+
+pub FilterRoot: Filter = {
+    <c:Combination> => Filter::Combination(Box::new(c)),
+    <f:Filter> => f,
+};

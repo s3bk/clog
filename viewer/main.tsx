@@ -45,7 +45,7 @@ function App() {
     const [list, updateList] = createSignal<JSXElement[]>([]);
     const [filtered, updateFilteredList] = createSignal<JSXElement[]>([]);
 
-    const [filterStr, setFilterStr] = createSignal<string | null>(JSON.stringify({"Status": { "Range": [400, 600] }}));
+    const [filterStr, setFilterStr] = createSignal<string | null>("status 400..500");
     const [filterStrError, setFilterStrError] = createSignal<string | null>(null);
 
     let view: ScrollView | null = null;
@@ -74,7 +74,7 @@ function App() {
         
         createEffect(() => {
             try {
-                filter_view.set_filter(JSON.parse(filterStr()));
+                filter_view.set_filter(filterStr());
                 updateFilteredList(filter_view.render(client));
 
                 setFilterStrError(null);

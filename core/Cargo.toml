@@ -28,6 +28,11 @@ postcard = { version = "*", features = ["use-std"] }
 strum = { version = "*", features = ["derive"] }
 regex = { version = "*" }
 strsim = "*"
+lalrpop-util = "0.22.1"
+
+# Add a build-time dependency on the lalrpop library:
+[build-dependencies]
+lalrpop = "0.22.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 gxhash = "*"

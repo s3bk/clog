@@ -122,6 +122,7 @@ fn test_log() {
      */
 }
 
+#[derive(Default)]
 pub struct Options {
     pub brotli_level: u8,
     pub dict: &'static [u8]
