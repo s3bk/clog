@@ -1,0 +1,23 @@
+[package]
+name = "clog_ws_api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "*", features = ["derive"]}
+istring = { version = "0.4.2", features = ["std", "serialize"] }
+indexmap = "*"
+soa-rs = "*"
+pco = "*"
+brotli = "*"
+bytemuck = "*"
+better_io = "*"
+paste = "*"
+itertools = "*"
+anyhow = "*"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gxhash = "*"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+rapidhash = "*"

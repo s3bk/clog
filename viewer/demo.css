@@ -1,0 +1,37 @@
+table.fixed { table-layout:fixed; }
+table.fixed td { overflow: hidden; }
+
+table > tr > td:nth-child(1) {
+    width: 20em;
+    max-width: 20em;
+}
+table > tr > td:nth-child(2) {
+    width: 10em;
+    max-width: 10em;
+}
+table > tr > td:nth-child(3) {
+    width: 10em;
+    max-width: 10em;
+}
+table > tr > td:nth-child(4) {
+    width: 5em;
+    max-width: 5em;
+}
+table > tr > td:nth-child(5) {
+    width: 50em;
+    max-width: 50em;
+}
+
+table > tr:nth-child(2n) {
+    background-color: lightgoldenrodyellow;
+}
+
+table > tr > td {
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+}
+
+input[type=text] {
+    width: 100%;
+}

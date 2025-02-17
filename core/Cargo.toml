@@ -1,0 +1,43 @@
+[package]
+name = "clog_core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chute = "*"
+indexmap = "*"
+soa-rs = "*"
+pco = "*"
+brotli = "*"
+bytemuck = "*"
+better_io = "*"
+paste = "*"
+istring = { version = "0.4.2", features = ["std", "serialize"] }
+itertools = "*"
+anyhow = "*"
+serde = { version = "1", features = ["derive"] }
+serde_json = "*"
+zstd = "0.13"
+string-interner = "*"
+tokio = { version = "*", features = ["sync", "rt", "macros"] }
+bytes = "*"
+postcard = { version = "*", features = ["use-std"] }
+strum = { version = "*", features = ["derive"] }
+regex = { version = "*" }
+strsim = "*"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gxhash = "*"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+rapidhash = "*"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "log"
+harness = false

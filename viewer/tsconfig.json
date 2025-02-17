@@ -1,0 +1,21 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "allowSyntheticDefaultImports": true,
+        "removeComments": true,
+        "esModuleInterop": true,
+        "sourceMap": true,
+        "outDir": "public/js/",
+        "sourceRoot": "/ts",
+        "experimentalDecorators": true,
+        "jsx": "preserve",
+        "jsxImportSource": "solid-js",
+        "types": [],
+        "isolatedModules": true
+    },
+    "include": [
+        "main.tsx",
+    ]
+}
