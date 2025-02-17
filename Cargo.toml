@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+    "client",
+    "core",
+    "viewer",
+    "ws_api",
+    "ws_server"
+]
