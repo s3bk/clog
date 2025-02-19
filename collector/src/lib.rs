@@ -1,11 +1,9 @@
 use std::{collections::{BTreeMap, VecDeque}, io::Cursor, mem::replace, sync::Arc};
-
 use anyhow::Error;
-use bytemuck::bytes_of;
 use bytes::{Bytes, BytesMut};
 use tokio::{select, sync::{broadcast, mpsc::{channel, Receiver, Sender}, oneshot}, task::spawn_blocking};
 
-use crate::{shema::{BatchEntry, Builder}, BatchHeader, PacketType, RequestEntry};
+use clog_core::{shema::{BatchEntry, Builder}, BatchHeader, PacketType, RequestEntry, SyncHeader};
 
 enum ClientMsg {
     Attach { tx: oneshot::Sender<broadcast::Receiver<Bytes>> },
@@ -128,10 +126,16 @@ impl CollectorBackend {
             let _ = tx.blocking_send(PastCommand::AddBuffer { start: builder_start, data });
         });
     }
-    async fn send_sync(&self, tx: &Sender<Bytes>) {
-        let mut sync_buf = BytesMut::with_capacity(1+8);
+    async fn send_sync(&self, tx: &Sender<Bytes>, first_backlog: u64) {
+        let info = SyncHeader {
+            block_size: self.block_limit,
+            first_backlog,
+            first_block: 0,
+            start: self.current_start
+        };
+        let mut sync_buf = BytesMut::with_capacity(32);
         PacketType::Sync.write_to(&mut sync_buf);
-        let sync_buf = postcard::to_extend(&BatchHeader { start: self.current_start + self.current.len() as u64 }, sync_buf).unwrap();
+        let sync_buf = postcard::to_extend(&info, sync_buf).unwrap();
         tx.send(sync_buf.into()).await;
     }
     fn get_current(&self, tx: Sender<Bytes>) -> u64 {
@@ -148,10 +152,12 @@ impl CollectorBackend {
         self.tx.subscribe()
     }
     pub async fn follow_with_backlog(&self, backlog: u64, batch_tx: Sender<Bytes>) -> broadcast::Receiver<Bytes> {
-        self.send_sync(&batch_tx).await;
+        let first_backlog = self.current_start.saturating_sub(backlog);
+        self.send_sync(&batch_tx, first_backlog).await;
+
         let current = self.get_current(batch_tx.clone());
         let row_rx = self.tx.subscribe();
-        self.past_tx.send(PastCommand::Get { start: current.saturating_sub(backlog), end: current, tx: batch_tx }).await.unwrap();
+        self.past_tx.send(PastCommand::Get { start: first_backlog , end: current, tx: batch_tx }).await.unwrap();
         row_rx
     }
     pub async fn get_range(&self, start: u64, end: u64, batch_tx: Sender<Bytes>) {
@@ -187,7 +193,7 @@ fn encode_batch(start: u64, builder: &Builder, brotli_level: u8) -> Bytes {
         start
     }, buffer).unwrap();
 
-    let data = builder.write_to(buffer, &crate::Options { brotli_level, dict: &[] });
+    let data = builder.write_to(buffer, &clog_core::Options { brotli_level, dict: &[] });
     data.into()
 }
 
@@ -206,11 +212,16 @@ impl PastManager {
         while let Some(cmd) = self.past_rx.recv().await {
             match cmd {
                 PastCommand::AddBuffer { start, data } => {
+                    println!("add buffer at {}", start);
                     self.past_buffers.insert(start, data);
                 }
                 PastCommand::Get { start, end, tx } => {
-                    for (_, data) in self.past_buffers.range(start..end) {
+                    println!("GET {start}..{end}");
+                    for (&pos, data) in self.past_buffers.range(..end).rev() {
                         let _ = tx.send(data.clone()).await;
+                        if pos < start {
+                            break;
+                        }
                     }
                 }
                 PastCommand::Flush { tx } => {

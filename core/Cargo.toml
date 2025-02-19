@@ -19,16 +19,14 @@ istring = { version = "0.4.2", features = ["std", "serialize"] }
 itertools = "*"
 anyhow = "*"
 serde = { version = "1", features = ["derive"] }
-serde_json = "*"
-zstd = "0.13"
 string-interner = "*"
-tokio = { version = "*", features = ["sync", "rt", "macros"] }
 bytes = "*"
 postcard = { version = "*", features = ["use-std"] }
 strum = { version = "*", features = ["derive"] }
 regex = { version = "*" }
 strsim = "*"
-lalrpop-util = "0.22.1"
+lalrpop-util = { version = "0.22.1", features = ["lexer"] }
+time = { version = "*", features = ["wasm-bindgen"] }
 
 # Add a build-time dependency on the lalrpop library:
 [build-dependencies]
@@ -42,6 +40,7 @@ rapidhash = "*"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+serde_json = "*"
 
 [[bench]]
 name = "log"

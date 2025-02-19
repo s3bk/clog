@@ -1,6 +1,8 @@
 use std::str::FromStr;
+use std::time::Duration;
 use crate::filter::*;
 use lalrpop_util::ParseError;
+use time::{Date, Time};
 
 grammar;
 
@@ -8,7 +10,10 @@ extern {
     type Error = FilterParseError;
 }
 
-Num: u16 = <s:r"[0-9]+"> => u16::from_str(s).unwrap();
+NumU8: u8 = <s:r"[0-9]+"> =>? u8::from_str(s).map_err(|e| ParseError::User { error: FilterParseError::ParseInt(e) });
+NumU16: u16 = <s:r"[0-9]+"> =>? u16::from_str(s).map_err(|e| ParseError::User { error: FilterParseError::ParseInt(e) });
+NumU32: u32 = <s:r"[0-9]+"> =>? u32::from_str(s).map_err(|e| ParseError::User { error: FilterParseError::ParseInt(e) });
+
 pub SimpleLit: &'input str = <l:r#"[a-zA-Z\/\?\+\-_\.\:=\&]+"#> => l;
 pub Str: String = <lo:@L> <l:r#""(\\\\|\\"|[^"\\])*""#> =>? apply_string_escapes(&l[1..l.len()-1], lo + 1);
 
@@ -17,45 +22,88 @@ pub Lit: String = {
     <s:Str> => s,
 };
 
-Regex: Regex =  <l:r#""(\\\\|\\"|[^"\\])*""#> =>? Regex::new(l).map_err(|e| ParseError::User { error: FilterParseError::Regex(e) });
+pub Regex: Regex =  <l:r#"r"(\\\\|\\"|[^"\\])*""#> =>? Regex::new(&l[2..l.len()-1]).map_err(|e| ParseError::User { error: FilterParseError::Regex(e) });
 
-StringFilter: StringFilter = {
+pub StringFilter: StringFilter = {
     <s:Lit> => StringFilter::Equals(s),
     <s:Lit> "*" => StringFilter::Prefix(s),
     "*" <s:Lit> => StringFilter::Suffix(s),
     "*" <s:Lit> "*" => StringFilter::Contains(s),
-    "~" <s:Regex> => StringFilter::Regex(s),
+    <s:Regex> => StringFilter::Regex(s),
 };
 
 NumberFilter: NumberFilter<u16> = {
-    <a:Num> => NumberFilter::Equals(a),
-    <a:Num> ".." <b:Num> => NumberFilter::Range(a, b),
-    ">" <a:Num> => NumberFilter::Range(a+1, u16::MAX),
-    ">=" <a:Num> => NumberFilter::Range(a, u16::MAX),
-    "<" <a:Num> => NumberFilter::Range(0, a),
-    "<=" <a:Num> => NumberFilter::Range(0, a+1),
+    <a:NumU16> => NumberFilter::Equals(a),
+    <a:NumU16> ".." <b:NumU16> => NumberFilter::Range(a, b),
+    ">" <a:NumU16> => NumberFilter::Range(a+1, u16::MAX),
+    ">=" <a:NumU16> => NumberFilter::Range(a, u16::MAX),
+    "<" <a:NumU16> => NumberFilter::Range(0, a),
+    "<=" <a:NumU16> => NumberFilter::Range(0, a+1),
+};
+
+IpBlock: IpBlock = {
+    "*" => IpBlock::any(),
+    <n:NumU8> => IpBlock::byte(n)
+}
+IpFilter: IpFilter = {
+    <a:IpBlock> "." <b:IpBlock> "." <c:IpBlock> "." <d:IpBlock> => IpFilter::ipv4(a, b, c, d),
+}
+
+TimeUnit: u32 = {
+    "s" => 1,
+    "min" => 60,
+    "h" => 3600,
+    "d" => 24 * 3600,
+    "w" => 7 * 24 * 3600
+};
+
+Duration: i64 = <n:NumU32> <u:TimeUnit> => n as i64 * u as i64;
+Date: Date = <y:NumU16> "-" <m:NumU8> "-" <d:NumU8> =>? parse_date(y, m, d);
+Time: Time = {
+    <h:NumU8> ":" <m:NumU8> =>? parse_time(h, m, 0),
+    <h:NumU8> ":" <m:NumU8> ":" <s:NumU8> =>? parse_time(h, m, s),
+};
+
+#[inline]
+TimeSpec: TimeSpec = {
+    "-" <d:Duration> => TimeSpec::Relative(-d),
+    "+" <d:Duration> => TimeSpec::Relative(d),
+    <d:Date> <t:Time> => timestamp(d, t),
+    <d:Date> => timestamp(d, Time::MIDNIGHT),
+}
+
+TimeFilter: TimeFilter = {
+    <d:Date> <a:Time> ".." <b:Time> => TimeFilter::between(timestamp(d, a), timestamp(d, b)),
+    <d:Date> => TimeFilter::day(d),
+    <a:TimeSpec> ".." <b:TimeSpec> => TimeFilter::between(a, b),
+    <a:TimeSpec> ".." => TimeFilter::after(a),
+    ".." <b:TimeSpec> => TimeFilter::before(b),
 };
 
 Combination: Combinations = {
-    "!" <f:Filter> => Combinations::Not(f),
-    <a:Filter> "&" <b:Filter> => Combinations::And(vec![a, b]),
-    <a:Filter> "|" <b:Filter> => Combinations::Or(vec![a, b]),
-    <a:Filter> "^" <b:Filter> => Combinations::Xor(vec![a, b]),
+    "!" <f:Filter> => Combinations::Not(f.into()),
+    <f:(<Filter> "&")+> <g:Filter> => Combinations::And(join(f,g)),
+    <f:(<Filter> "|")+> <g:Filter> => Combinations::Or(join(f,g)),
+    <f:(<Filter> "^")+> <g:Filter> => Combinations::Xor(join(f,g)),
 }
 
 Field: FieldFilter = {
-    "port" <n:NumberFilter> => FieldFilter::Port(n),
-    "status" <n:NumberFilter> => FieldFilter::Status(n),
+    "status" <f:NumberFilter> => FieldFilter::Status(f),
+    "method" <f:StringFilter> => FieldFilter::Method(f),
     "uri" <f:StringFilter> => FieldFilter::Uri(f),
     "ua" <f:StringFilter> => FieldFilter::UserAgent(f),
+    "referer" <f:StringFilter> => FieldFilter::Referer(f),
+    "ip" <f:IpFilter> => FieldFilter::Ip(f),
+    "port" <f:NumberFilter> => FieldFilter::Port(f),
+    "time" <f:TimeFilter> => FieldFilter::Time(f),
 };
 
 Filter: Filter = {
     <f:Field> => Filter::Field(f),
-    "(" <c:Combination> ")" => Filter::Combination(Box::new(c))
+    "(" <c:Combination> ")" => Filter::Combination(c)
 };
 
 pub FilterRoot: Filter = {
-    <c:Combination> => Filter::Combination(Box::new(c)),
+    <c:Combination> => Filter::Combination(c),
     <f:Filter> => f,
 };

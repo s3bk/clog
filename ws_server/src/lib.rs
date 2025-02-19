@@ -1,7 +1,8 @@
 use axum::{body::Bytes, extract::ws::{Message, WebSocket}};
+use clog_core::PacketType;
 use clog_ws_api::{ClientMessage, ServerMessage};
 
-use clog_core::collector::{ClientHandle, LogCollector};
+use clog_collector::{ClientHandle, LogCollector};
 use tokio::{select, sync::broadcast};
 
 struct ClientState {
@@ -12,8 +13,8 @@ struct ClientState {
 impl ClientState {
     async fn handle_packet(&mut self, msg: Message) {
         match msg {
-            Message::Text(s) => {
-                let Ok(msg) = serde_json::from_str::<ClientMessage>(&s) else { return };
+            Message::Binary(data) => {
+                let Ok(msg) = postcard::from_bytes::<ClientMessage>(&data) else { return };
 
                 match msg {
                     ClientMessage::FetchRange { start, end } => {
@@ -40,7 +41,8 @@ impl ClientState {
         }
     }
     async fn send_msg(&mut self, msg: ServerMessage) {
-        self.ws.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await;
+        let data = msg.encode();
+        self.ws.send(Message::Binary(data.into())).await;
     }
     async fn handle_row(&mut self, r: Result<Bytes, broadcast::error::RecvError>) {
         match r {

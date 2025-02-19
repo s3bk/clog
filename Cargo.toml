@@ -1,7 +1,8 @@
 [workspace]
+resolver = "3"
 
 members = [
-    "client",
+    "client", "collector",
     "core",
     "ws_api",
     "ws_server"

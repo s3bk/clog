@@ -1,0 +1,14 @@
+[package]
+name = "clog_collector"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "*", features = ["sync", "rt", "macros"] }
+anyhow = "*"
+bytes = "*"
+postcard = { version = "*", features = ["use-std"] }
+
+
+[dependencies.clog_core]
+path = "../core"

@@ -6,14 +6,12 @@ edition = "2024"
 [dependencies]
 js-sys = "*"
 web-sys = { version = "*", features = ["WebSocket", "MessageEvent", "BinaryType", "console"] }
-serde-wasm-bindgen = "*"
 wasm-bindgen = "*"
-ouroboros = "*"
 postcard = "*"
-serde_json = "*"
 clog_core = { path = "../core" }
 clog_ws_api = { path = "../ws_api" }
 serde = { version = "*", features = ["derive"] }
+time = "*"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -7,7 +7,6 @@ use istring::SmallString;
 use pco::wrapped::{FileCompressor, FileDecompressor};
 use anyhow::{Error};
 use serde::{Deserialize, Serialize};
-use shema::{BatchEntry, Builder};
 use strum::FromRepr;
 use types::compress_string;
 use util::IoWritePos;
@@ -15,7 +14,6 @@ use util::IoWritePos;
 mod util;
 pub mod shema;
 mod types;
-pub mod collector;
 pub mod filter;
 
 #[cfg(target_arch = "wasm32")]
@@ -41,12 +39,22 @@ pub struct BatchHeader {
     pub start: u64
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct SyncHeader {
+    pub start: u64,
+    pub block_size: usize,
+    pub first_block: u64,
+    pub first_backlog: u64,
+}
+
+
 #[derive(Copy, Clone, FromRepr)]
 #[repr(u8)]
 pub enum PacketType {
     Batch = 1,
     Row = 2,
     Sync = 3,
+    ServerMsg = 4,
 }
 impl PacketType {
     pub fn write_to(&self, buf: &mut BytesMut) {
@@ -74,6 +82,7 @@ pub trait DataBuilder: Sized {
     fn get<'a>(&'a self, compressed: Self::CompressedItem) -> Option<Self::Item<'a>>;
 }
 
+#[cfg(test)]
 fn read_log() -> impl Iterator<Item=RequestEntry> {
     let file = File::open("../artisan/user.log").unwrap();
     let mut reader = BufReader::new(file);

@@ -1,8 +1,11 @@
 use std::borrow::Cow;
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::num::ParseIntError;
 
 use lalrpop_util::{lalrpop_mod, ParseError};
 use regex::Regex;
 use serde::{Deserialize, Deserializer};
+use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
 use crate::shema::BatchEntry;
 
 lalrpop_mod!(grammar);
@@ -54,17 +57,105 @@ impl StringFilter {
         }
     }
 }
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct IpBlock {
+    bits: u8,
+    mask: u8,
+}
+impl IpBlock {
+    fn any() -> Self {
+        IpBlock { bits: 0, mask: 0 }
+    }
+    fn byte(n: u8) -> Self {
+        IpBlock { bits: n, mask: 255 }
+    }
+}
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct IpFilter {
+    bits: u128,
+    mask: u128,
+}
+impl IpFilter {
+    pub fn ipv4(a: IpBlock, b: IpBlock, c: IpBlock, d: IpBlock) -> Self {
+        let bytes = [  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,255,255,a.bits,b.bits,c.bits,d.bits];
+        let mask =  [255,255,255,255,255,255,255,255,255,255,255,255,a.mask,b.mask,c.mask,d.mask];
+        IpFilter {
+            bits: u128::from_be_bytes(bytes),
+            mask: u128::from_be_bytes(mask)
+        }
+    }
+    pub fn matches(&self, ip: Ipv6Addr) -> bool {
+        (ip.to_bits() ^ self.bits) & self.mask == 0
+    }
+}
+
+pub struct FilterCtx {
+    pub now: u64
+}
+impl FilterCtx {
+    pub fn new() -> Self {
+        FilterCtx {
+            now: OffsetDateTime::now_utc().unix_timestamp() as u64
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct TimeFilter {
+    pub start: Option<TimeSpec>,
+    pub end: Option<TimeSpec>
+}
+
+impl TimeFilter {
+    fn day(d: Date) -> Self {
+        TimeFilter { start: Some(timestamp(d, Time::MIDNIGHT)), end: d.next_day().map(|e| timestamp(e, Time::MIDNIGHT)) }
+    }
+    fn after(t: TimeSpec) -> Self {
+        TimeFilter { start: Some(t), end: None }
+    }
+    fn before(t: TimeSpec) -> Self {
+        TimeFilter { start: None, end: Some(t) }
+    }
+    fn between(a: TimeSpec, b: TimeSpec) -> Self {
+        TimeFilter { start: Some(a), end: Some(b) }
+    }
+    pub fn matches(&self, ctx: &FilterCtx, t: u64) -> bool {
+        let c1 = match self.start {
+            None => true,
+            Some(TimeSpec::Absolute(start)) => t >= start,
+            Some(TimeSpec::Relative(dt)) => t >= ctx.now + (dt as u64),
+        };
+        let c2 = match self.end {
+            None => true,
+            Some(TimeSpec::Absolute(end)) => t < end,
+            Some(TimeSpec::Relative(dt)) => t < ctx.now + (dt as u64)
+        };
+        c1 & c2
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub enum TimeSpec {
+    Relative(i64),
+    Absolute(u64),
+}
+
 #[derive(Debug, Deserialize, PartialEq)]
 pub enum FieldFilter {
-    Port(NumberFilter<u16>),
-    UserAgent(StringFilter),
-    Uri(StringFilter),
     Status(NumberFilter<u16>),
+    Method(StringFilter),
+    Uri(StringFilter),
+    UserAgent(StringFilter),
+    Referer(StringFilter),
+    Ip(IpFilter),
+    Port(NumberFilter<u16>),
+    Time(TimeFilter),
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub enum Combinations {
-    Not(Filter),
+    Not(Box<Filter>),
     And(Vec<Filter>),
     Or(Vec<Filter>),
     Xor(Vec<Filter>),
@@ -75,22 +166,26 @@ use crate::filter::grammar::Token;
 #[serde(untagged)] 
 pub enum Filter {
     Field(FieldFilter),
-    Combination(Box<Combinations>)
+    Combination(Combinations)
 }
 impl Filter {
-    pub fn matches(&self, entry: &BatchEntry) -> bool {
+    pub fn matches(&self, ctx: &FilterCtx, entry: &BatchEntry) -> bool {
         match self {
             Filter::Field(f) => match f {
                 FieldFilter::Port(n) => n.matches(entry.port),
+                FieldFilter::Method(f) => f.matches(entry.method),
                 FieldFilter::Status(n) => n.matches(entry.status),
                 FieldFilter::Uri(s) => s.matches(entry.uri),
                 FieldFilter::UserAgent(s) => s.matches(entry.ua.unwrap_or_default()),
+                FieldFilter::Ip(i) => i.matches(entry.ip),
+                FieldFilter::Referer(f) => f.matches(entry.referer.unwrap_or_default()),
+                FieldFilter::Time(f) => f.matches(ctx, entry.time),
             }
-            Filter::Combination(c) => match &**c {
-                Combinations::Not(f) => !f.matches(entry),
-                Combinations::And(v) => v.iter().all(|f| f.matches(entry)),
-                Combinations::Or(v) => v.iter().any(|f| f.matches(entry)),
-                Combinations::Xor(v) => v.iter().fold(false, |b, f| b ^ f.matches(entry)),
+            Filter::Combination(c) => match c {
+                Combinations::Not(f) => !f.matches(ctx, entry),
+                Combinations::And(v) => v.iter().all(|f| f.matches(ctx, entry)),
+                Combinations::Or(v) => v.iter().any(|f| f.matches(ctx, entry)),
+                Combinations::Xor(v) => v.iter().fold(false, |b, f| b ^ f.matches(ctx, entry)),
             }
         }
     }
@@ -104,7 +199,7 @@ fn deser_regex<'de, D>(deserializer: D) -> Result<Regex, D::Error> where D: Dese
     Regex::new(&s).map_err(serde::de::Error::custom)
 }
 
-pub fn apply_string_escapes(code: &str, idx0: usize) -> Result<String, lalrpop_util::ParseError<usize, Token, FilterParseError>> {
+fn apply_string_escapes(code: &str, idx0: usize) -> Result<String, lalrpop_util::ParseError<usize, Token, FilterParseError>> {
     if !code.contains('\\') {
         Ok(code.into())
     } else {
@@ -131,14 +226,36 @@ pub fn apply_string_escapes(code: &str, idx0: usize) -> Result<String, lalrpop_u
     }
 }
 
+fn parse_date(year: u16, month: u8, day: u8) -> Result<Date, lalrpop_util::ParseError<usize, Token<'static>, FilterParseError>> {
+    let month = month.try_into().map_err(|_| ParseError::User { error: FilterParseError::Date })?;
+    Date::from_calendar_date(year as i32, month, day).map_err(|_| ParseError::User { error: FilterParseError::Date })
+}
+fn parse_time(hour: u8, minute: u8, second: u8) -> Result<Time, lalrpop_util::ParseError<usize, Token<'static>, FilterParseError>> {
+    Time::from_hms(hour, minute, second).map_err(|_| ParseError::User { error: FilterParseError::Date })
+}
+
+fn timestamp(date: Date, time: Time) -> TimeSpec {
+    TimeSpec::Absolute(PrimitiveDateTime::new(date, time).assume_utc().unix_timestamp() as u64)
+}
+
+fn join<T>(mut v: Vec<T>, other: T) -> Vec<T> {
+    v.push(other);
+    v
+}
+
+
 #[derive(Debug, PartialEq)]
 pub enum FilterParseError {
     Regex(regex::Error),
+    ParseInt(ParseIntError),
+    Date,
 }
 impl std::fmt::Display for FilterParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FilterParseError::Regex(e) => write!(f, "Failed to parse Regex: {e}"),
+            FilterParseError::ParseInt(e) => write!(f, "Integer out of range: {e}"),
+            FilterParseError::Date => write!(f, "Invalid date"),
         }
     }
 }
@@ -146,6 +263,11 @@ impl std::fmt::Display for FilterParseError {
 #[test]
 fn test_filter_parser() {
     assert_eq!(Filter::parse("port 80"), Ok(Filter::Field(FieldFilter::Port(NumberFilter::Equals(80)))));
+    assert_eq!(Filter::parse("port 80 & uri /api & port 100"), Ok(Filter::Combination(Box::new(Combinations::And(vec![
+        FieldFilter::Port(NumberFilter::Equals(80)),
+        FieldFilter::Uri(StringFilter::Equals("/api".into())),
+        FieldFilter::Port(NumberFilter::Equals(100))
+    ])))));
     assert_eq!(Filter::parse("uri /api/ *"), Ok(Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))));
     assert_eq!(Filter::parse(r#"port 80..100 & uri "/api/"*"#), Ok(Filter::Combination(Box::new(Combinations::And(vec![
         Filter::Field(FieldFilter::Port(NumberFilter::Range(80, 100))), Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))
@@ -158,4 +280,10 @@ fn test_lit_parser() {
     assert_eq!(StrParser::new().parse("\"api\""), Ok("api".into()));
     assert_eq!(LitParser::new().parse("/api"), Ok("/api".into()));
     assert_eq!(LitParser::new().parse("/api?foo=bar+baz&arg"), Ok("/api?foo=bar+baz&arg".into()));
+}
+
+#[test]
+fn test_regex() {
+    use grammar::RegexParser;
+    assert_eq!(RegexParser::new().parse(r##"r"[0-1a-e]+""##).unwrap().as_str(), "[0-1a-e]+");
 }

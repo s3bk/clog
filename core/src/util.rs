@@ -1,4 +1,4 @@
-use std::io::{self, Cursor};
+use std::io;
 
 use better_io::BetterBufRead;
 use brotli::CustomRead;

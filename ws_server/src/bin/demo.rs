@@ -1,8 +1,9 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Error;
-use axum::{extract::{ws::WebSocket, Request, State, WebSocketUpgrade}, response::{IntoResponse, Response}, routing::get, Router};
-use clog_core::{collector::{init_log, LogCollector}, RequestEntry};
+use axum::{extract::{Request, State, WebSocketUpgrade}, response::IntoResponse, routing::get, Router};
+use clog_collector::{init_log, LogCollector};
+use clog_core::RequestEntry;
 use tokio::{spawn, time::sleep};
 use tower_http::services::ServeDir;
 use ws_server::handle_ws;
@@ -26,8 +27,12 @@ async fn main() -> Result<(), Error> {
 
     let data = test_data();
     spawn(async move {
+        let mut data = data.into_iter();
+        for r in data.by_ref().take(10_000) {
+            log_tx.send(r).await.unwrap();
+        }
         for r in data {
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_millis(100)).await;
             log_tx.send(r).await.unwrap();
         }
     });
