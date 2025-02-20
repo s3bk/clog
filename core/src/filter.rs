@@ -263,15 +263,15 @@ impl std::fmt::Display for FilterParseError {
 #[test]
 fn test_filter_parser() {
     assert_eq!(Filter::parse("port 80"), Ok(Filter::Field(FieldFilter::Port(NumberFilter::Equals(80)))));
-    assert_eq!(Filter::parse("port 80 & uri /api & port 100"), Ok(Filter::Combination(Box::new(Combinations::And(vec![
-        FieldFilter::Port(NumberFilter::Equals(80)),
-        FieldFilter::Uri(StringFilter::Equals("/api".into())),
-        FieldFilter::Port(NumberFilter::Equals(100))
-    ])))));
+    assert_eq!(Filter::parse("port 80 & uri /api & port 100"), Ok(Filter::Combination(Combinations::And(vec![
+        Filter::Field(FieldFilter::Port(NumberFilter::Equals(80))),
+        Filter::Field(FieldFilter::Uri(StringFilter::Equals("/api".into()))),
+        Filter::Field(FieldFilter::Port(NumberFilter::Equals(100)))
+    ]))));
     assert_eq!(Filter::parse("uri /api/ *"), Ok(Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))));
-    assert_eq!(Filter::parse(r#"port 80..100 & uri "/api/"*"#), Ok(Filter::Combination(Box::new(Combinations::And(vec![
+    assert_eq!(Filter::parse(r#"port 80..100 & uri "/api/"*"#), Ok(Filter::Combination(Combinations::And(vec![
         Filter::Field(FieldFilter::Port(NumberFilter::Range(80, 100))), Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))
-    ])))));
+    ]))));
 }
 #[test]
 fn test_lit_parser() {

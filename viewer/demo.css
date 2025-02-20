@@ -1,60 +1,94 @@
-table.fixed { table-layout:fixed; }
-table.fixed td { overflow: hidden; }
+table.fixed {
+    table-layout: fixed;
+}
+
+table.fixed td {
+    overflow: hidden;
+}
 
 div.table {
     height: 32em;
     max-width: 100%;
 }
+
 div.table > table {
     max-width: 100%;
 }
-/* N */
-table > tbody > tr > td:nth-child(1) {
-    min-width: 3em;
-    max-width: 3em;
-    text-align: right;
-}
-/* TIME */
-table > tbody > tr > td:nth-child(2) {
-    min-width: 9em;
-    max-width: 9em;
-}
-/* Status */
-table > tbody > tr > td:nth-child(3) {
-    min-width: 2em;
-    max-width: 2em;
-    text-align: right;
-}
-/* URI */
-table > tbody > tr > td:nth-child(4) {
-    min-width: 30em;
-    max-width: 30em;
-}
-/* IP */
-table > tbody > tr > td:nth-child(5) {
-    min-width: 9em;
-    max-width: 9em;
-}
-/* PORT */
-table > tbody > tr > td:nth-child(6) {
-    min-width: 3em;
-    max-width: 3em;
-    text-align: right;
-}
-/* UA */
-table > tbody > tr > td:nth-child(7) {
-    max-width: 50em;
-    width: stretch;
+
+table > tbody > tr {
+    --n-width: 3em;
+    --time-width: 9em;
+    --status-width: 3em;
+    --uri-width: 30em;
+    --ip-width: 9em;
+    --port-width: 3em;
+    --ua-width: calc(100vw
+        - var(--n-width)
+        - var(--time-width)
+        - var(--status-width)
+        - var(--uri-width)
+        - var(--ip-width)
+        - var(--port-width)
+        - 4em
+    );
+    
+    /* Numbers */
+    td:nth-child(1), td:nth-child(2), td:nth-child(3), td:nth-child(6) {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    
+    /* N */
+    td:nth-child(1) {
+        min-width: var(--n-width);
+        max-width: var(--n-width);
+    }
+
+    /* TIME */
+    td:nth-child(2) {
+        min-width: var(--time-width);
+        max-width: var(--time-width);
+    }
+
+    /* Status */
+    td:nth-child(3) {
+        min-width: var(--status-width);
+        max-width: var(--status-width);
+    }
+
+    /* URI */
+    td:nth-child(4) {
+        min-width: var(--uri-width);
+        max-width: var(--uri-width);
+    }
+
+    /* IP */
+    td:nth-child(5) {
+        min-width: var(--ip-width);
+        max-width: var(--ip-width);
+    }
+
+    /* PORT */
+    td:nth-child(6) {
+        min-width: var(--port-width);
+        max-width: var(--port-width);
+    }
+
+    /* UA */
+    td:nth-child(7) {
+        max-width: var(--ua-width);
+        min-width: var(--ua-width);
+    }
+
+    td {
+        overflow-x: clip;
+        text-overflow: ellipsis;
+        text-wrap: nowrap;
+    }
 }
 
 table > tbody > tr:nth-child(2n) {
     background-color: lightgoldenrodyellow;
-}
-
-table > tbody > tr > td {
-    overflow-x: hidden;
-    text-overflow: ellipsis;
-    text-wrap: nowrap;
 }
 
 input[type=text] {

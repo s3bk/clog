@@ -1,5 +1,5 @@
 [package]
-name = "ws_server"
+name = "clog_ws_server"
 version = "0.1.0"
 edition = "2024"
 
@@ -9,7 +9,7 @@ clog_core = { path = "../core" }
 clog_collector = { path = "../collector" }
 clog_ws_api = { path = "../ws_api" }
 serde_json = "*"
-tokio = { version = "*", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "*", features = ["macros", "rt-multi-thread", "signal"] }
 anyhow = "*"
 tower-http = { version = "*", features = ["fs"] }
 tower = { version = "0.4", features = ["util"] }

@@ -1,12 +1,12 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{path::{Path, PathBuf}, sync::Arc, time::Duration};
 
 use anyhow::Error;
 use axum::{extract::{Request, State, WebSocketUpgrade}, response::IntoResponse, routing::get, Router};
-use clog_collector::{init_log, LogCollector};
+use clog_collector::{init_log, LogCollector, LogOptions};
 use clog_core::RequestEntry;
-use tokio::{spawn, time::sleep};
+use tokio::{spawn, time::sleep, signal};
 use tower_http::services::ServeDir;
-use ws_server::handle_ws;
+use clog_ws_server::handle_ws;
 
 struct App {
     log: LogCollector
@@ -22,9 +22,13 @@ async fn ws_handler(
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let (collector, log_tx) = init_log();
-    let state = Arc::new(App { log: collector });
+    let (collector, log_tx) = init_log(LogOptions {
+        data_dir: Some(PathBuf::from("blocks")),
+        read_old: true
+    }).await?;
+    let state = Arc::new(App { log: collector.clone() });
 
+    /*
     let data = test_data();
     spawn(async move {
         let mut data = data.into_iter();
@@ -32,10 +36,11 @@ async fn main() -> Result<(), Error> {
             log_tx.send(r).await.unwrap();
         }
         for r in data {
-            sleep(Duration::from_millis(100)).await;
+            sleep(Duration::from_millis(10)).await;
             log_tx.send(r).await.unwrap();
         }
     });
+    */
 
     let routes = Router::new()
         .route("/ws", get(ws_handler))
@@ -43,8 +48,37 @@ async fn main() -> Result<(), Error> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, routes).await?;
+    axum::serve(listener, routes)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    collector.flush().await?;
+
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
 
 async fn file_and_error_handler(req: Request) -> impl IntoResponse {

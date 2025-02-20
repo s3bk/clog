@@ -15,7 +15,8 @@ type BatchEntry = {
 };
 
 function init_ws(update: (c: Client, start: bigint, end: bigint) => void): Client {
-    let ws = new WebSocket("ws://127.0.0.1:3000/ws");
+    let ws = new WebSocket("ws://127.0.0.1:8080/api/ws");
+    //let ws = new WebSocket("ws://127.0.0.1:3000/ws");
     let client = new Client(ws);
     
     function handle_range(range: PacketRange) {
@@ -58,6 +59,7 @@ function App() {
         
     }).then(() => {
         function update(c: Client, start: bigint, end: bigint) {
+            console.log(`recieved ${start}..${end}`);
             if (follow) {
                 view.scroll_to_end(c);
                 filter_view.scroll_to_end(c);

@@ -1,14 +1,14 @@
-use std::{collections::{BTreeMap, VecDeque}, io::Cursor, mem::replace, sync::Arc};
-use anyhow::Error;
+use std::{collections::{BTreeMap, BTreeSet, VecDeque}, io::Cursor, mem::replace, path::PathBuf, sync::Arc};
+use anyhow::{bail, Error};
 use bytes::{Bytes, BytesMut};
 use tokio::{select, sync::{broadcast, mpsc::{channel, Receiver, Sender}, oneshot}, task::spawn_blocking};
 
 use clog_core::{shema::{BatchEntry, Builder}, BatchHeader, PacketType, RequestEntry, SyncHeader};
 
 enum ClientMsg {
-    Attach { tx: oneshot::Sender<broadcast::Receiver<Bytes>> },
     AttachWithBacklog { batch_tx: Sender<Bytes>, backlog: usize, tx: oneshot::Sender<broadcast::Receiver<Bytes>> },
-    GetRange { start: u64, end: u64, tx: Sender<Bytes> }
+    GetRange { start: u64, end: u64, tx: Sender<Bytes> },
+    Flush { tx: oneshot::Sender<Result<(), ()>> },
 }
 
 #[derive(Clone)]
@@ -24,15 +24,6 @@ pub struct ClientHandle {
 }
 
 impl LogCollector {
-    pub async fn attach(&self) -> Result<ClientHandle, Error> {
-        let (oneshot_tx, oneshot_rx) = oneshot::channel();
-        let (batch_tx, batch_rx) = channel(128);
-        
-        self.tx.send(ClientMsg::Attach { tx: oneshot_tx }).await?;
-        let row_rx = oneshot_rx.await?;
-
-        Ok(ClientHandle { row_rx, batch_rx, batch_tx, tx: self.tx.clone() })
-    }
     pub async fn attach_with_backlog(&self, backlog: usize) -> Result<ClientHandle, Error> {
         let (oneshot_tx, oneshot_rx) = oneshot::channel();
         let (batch_tx, batch_rx) = channel(128);
@@ -42,6 +33,12 @@ impl LogCollector {
 
         Ok(ClientHandle { row_rx, batch_rx, batch_tx, tx: self.tx.clone() })
     }
+    pub async fn flush(&self) -> Result<(), Error> {
+        let (tx, rx) = oneshot::channel();
+        self.tx.send(ClientMsg::Flush { tx }).await?;
+        rx.await?.map_err(|_| anyhow::anyhow!("flush not successful"))?;
+        Ok(())
+    }
 }
 impl ClientHandle {
     pub async fn get_range(&self, start: u64, end: u64) -> Result<(), Error> {
@@ -50,12 +47,23 @@ impl ClientHandle {
     }
 }
 
-pub fn init_log() -> (LogCollector, Sender<RequestEntry>) {
+pub struct LogOptions {
+    pub data_dir: Option<PathBuf>,
+    pub read_old: bool,
+}
+
+pub async fn init_log(options: LogOptions) -> Result<(LogCollector, Sender<RequestEntry>), Error> {
     let (client_tx, mut client_rx) = channel(128);
     let (past_tx, past_rx) = channel(128);
     let (row_tx, row_rx) = broadcast::channel(4096);
     let (event_tx, mut event_rx) = channel::<RequestEntry>(128);
 
+    let mut past = PastManager {
+        past_buffers: Default::default(),
+        past_rx,
+        dir: options.data_dir,
+    };
+    
     let mut backend = CollectorBackend {
         past_tx,
         block_limit: 10_000,
@@ -63,6 +71,20 @@ pub fn init_log() -> (LogCollector, Sender<RequestEntry>) {
         current_start: 0,
         tx: row_tx
     };
+
+    if options.read_old {
+        past.read().await?;
+        if let Some((start, data)) = past.take_last().await? {
+            let (start2, builder) = decode_batch(&data)?;
+            if start != start2 {
+                bail!("header mismatch {start} != {start2}");
+            }
+            backend.current = builder;
+            backend.current_start = start;
+            println!("resume log at {start}");
+        }
+    }
+
 
     tokio::spawn(async move {
         loop {
@@ -79,14 +101,10 @@ pub fn init_log() -> (LogCollector, Sender<RequestEntry>) {
     });
 
     tokio::spawn(async move {
-        let mut past = PastManager {
-            past_buffers: Default::default(),
-            past_rx
-        };
         past.run().await;
     });
 
-    (LogCollector { tx: client_tx }, event_tx)
+    Ok((LogCollector { tx: client_tx }, event_tx))
 }
 
 
@@ -131,7 +149,7 @@ impl CollectorBackend {
             block_size: self.block_limit,
             first_backlog,
             first_block: 0,
-            start: self.current_start
+            start: self.current_start + self.current.len() as u64
         };
         let mut sync_buf = BytesMut::with_capacity(32);
         PacketType::Sync.write_to(&mut sync_buf);
@@ -140,16 +158,14 @@ impl CollectorBackend {
     }
     fn get_current(&self, tx: Sender<Bytes>) -> u64 {
         let start = self.current_start;
-        let current = self.current.clone();
-        spawn_blocking(move || {
-            let data = encode_batch(start, &current, 5);
-            let _ = tx.blocking_send(data.into());
-        });
-
+        if self.current.len() > 0 {
+            let current = self.current.clone();
+            spawn_blocking(move || {
+                let data = encode_batch(start, &current, 5);
+                let _ = tx.blocking_send(data.into());
+            });
+        }
         start
-    }
-    pub fn follow(&self) -> broadcast::Receiver<Bytes> {
-        self.tx.subscribe()
     }
     pub async fn follow_with_backlog(&self, backlog: u64, batch_tx: Sender<Bytes>) -> broadcast::Receiver<Bytes> {
         let first_backlog = self.current_start.saturating_sub(backlog);
@@ -165,24 +181,25 @@ impl CollectorBackend {
     }
     pub async fn handle_msg(&mut self, msg: ClientMsg) {
         match msg {
-            ClientMsg::Attach { tx } => {
-                let rx = self.follow();
-                tx.send(rx);
-            }
             ClientMsg::AttachWithBacklog { batch_tx, backlog, tx } => {
                 let rx = self.follow_with_backlog(backlog as _, batch_tx).await;
-                tx.send(rx);
+                let _ = tx.send(rx);
             }
             ClientMsg::GetRange { start, end, tx } => {
                 self.get_range(start, end, tx).await;
             }
+            ClientMsg::Flush { tx } => {
+                let r = self.flush().await.map_err(|_| ());
+                let _ = tx.send(r);
+            }
         }
     }
-    async fn flush(&mut self) {
+    async fn flush(&mut self) -> Result<(), Error> {
         let (tx, rx) = oneshot::channel();
         self.send_current();
-        self.past_tx.send(PastCommand::Flush { tx }).await;
-        rx.await;
+        self.past_tx.send(PastCommand::Flush { tx }).await?;
+        rx.await?;
+        Ok(())
     }
 }
 
@@ -196,6 +213,17 @@ fn encode_batch(start: u64, builder: &Builder, brotli_level: u8) -> Bytes {
     let data = builder.write_to(buffer, &clog_core::Options { brotli_level, dict: &[] });
     data.into()
 }
+fn decode_batch(data: &[u8]) -> Result<(u64, Builder), Error> {
+    let (&ptype, data) = data.split_first().ok_or(anyhow::anyhow!("no data"))?;
+
+    if ptype != PacketType::Batch as u8 {
+        bail!("invalid header");
+    }
+
+    let (header, data) = postcard::take_from_bytes::<BatchHeader>(data)?;
+    let builder = Builder::from_slice(data)?;
+    Ok((header.start, builder))
+}
 
 enum PastCommand {
     AddBuffer { start: u64, data: Bytes },
@@ -205,7 +233,8 @@ enum PastCommand {
 
 struct PastManager {
     past_rx: Receiver<PastCommand>,
-    past_buffers: BTreeMap<u64, Bytes>
+    past_buffers: BTreeMap<u64, Option<Bytes>>,
+    dir: Option<PathBuf>,
 }
 impl PastManager {
     async fn run(&mut self) {
@@ -213,12 +242,28 @@ impl PastManager {
             match cmd {
                 PastCommand::AddBuffer { start, data } => {
                     println!("add buffer at {}", start);
-                    self.past_buffers.insert(start, data);
+                    if let Some(ref root) = self.dir {
+                        let path = root.join(format!("block-{start}.clog"));
+                        tokio::fs::write(path, &data).await;
+                    }
+                    self.past_buffers.insert(start, Some(data));
                 }
                 PastCommand::Get { start, end, tx } => {
                     println!("GET {start}..{end}");
-                    for (&pos, data) in self.past_buffers.range(..end).rev() {
-                        let _ = tx.send(data.clone()).await;
+                    for (&pos, data) in self.past_buffers.range_mut(..end).rev() {
+                        if data.is_none() {
+                            if let Some(ref dir) = self.dir {
+                                let path = dir.join(format!("block-{start}.clog"));
+                                println!("reading {path:?}");
+                                if let Ok(new) = tokio::fs::read(path).await {
+                                    let bytes = Bytes::from(new);
+                                    *data = Some(bytes.clone());
+                                }
+                            }
+                        };
+                        if let Some(data) = data {
+                            let _ = tx.send(data.clone()).await;
+                        }
                         if pos < start {
                             break;
                         }
@@ -229,5 +274,38 @@ impl PastManager {
                 }
             }
         }
+    }
+
+    async fn take_last(&mut self) -> Result<Option<(u64, Bytes)>, Error> {
+        if let Some((start, data)) = self.past_buffers.pop_last() {
+            if let Some(data) = data {
+                return Ok(Some((start, data)));
+            }
+            if let Some(ref dir) = self.dir {
+                let path = dir.join(format!("block-{start}.clog"));
+                println!("reading {path:?}");
+                if let Ok(new) = tokio::fs::read(path).await {
+                    let bytes = Bytes::from(new);
+                    return Ok(Some((start, bytes)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    async fn read(&mut self) -> Result<(), Error> {
+        let Some(ref path) = self.dir else { return Ok(()) };
+        let mut dir = tokio::fs::read_dir(path).await?;
+
+        while let Some(entry) = dir.next_entry().await? {
+            let path = entry.path();
+            if path.extension().map(|e| e == "clog").unwrap_or(false) {
+                if let Some(n) = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.strip_prefix("block-")).and_then(|s| s.parse::<u64>().ok()) {
+                    println!("  block {n}");
+                    self.past_buffers.insert(n, None);
+                }
+            }
+        }
+        Ok(())
     }
 }

@@ -8,7 +8,7 @@ js-sys = "*"
 web-sys = { version = "*", features = ["WebSocket", "MessageEvent", "BinaryType", "console"] }
 wasm-bindgen = "*"
 postcard = "*"
-clog_core = { path = "../core" }
+clog_core = { path = "../core", features = ["encode"] }
 clog_ws_api = { path = "../ws_api" }
 serde = { version = "*", features = ["derive"] }
 time = "*"

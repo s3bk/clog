@@ -6,12 +6,17 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+encode = ["dep:brotli"]
+
 [dependencies]
 chute = "*"
 indexmap = "*"
 soa-rs = "*"
 pco = "*"
-brotli = "*"
+brotli = { version = "*", default-features = false, features = ["std"], optional = true }
+brotli-decompressor = { version = "*" }
 bytemuck = "*"
 better_io = "*"
 paste = "*"

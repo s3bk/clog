@@ -180,7 +180,7 @@ impl ScrollView {
     // returns true if the end in that direction was reached
     pub fn scroll_by(&mut self, client: &mut Client, by: i32) -> bool {
         if by > 0 {
-            let max = client.end() - self.len as u64;
+            let max = client.end().saturating_sub(self.len as u64);
             let new_start = self.start + by as u64;
             if new_start >= max {
                 self.start = max;
@@ -199,7 +199,7 @@ impl ScrollView {
         self.start = pos;
     }
     pub fn scroll_to_end(&mut self, client: &Client) {
-        self.start = client.end() - self.len as u64
+        self.start = client.end().saturating_sub(self.len as u64);
     }
     pub fn pos(&self) -> u64 {
         self.start
@@ -208,6 +208,7 @@ impl ScrollView {
         self.produce.call2(&JsValue::null(), &bigint(n), &wrap(e))
     }
     pub fn render(&mut self, client: &Client) -> Result<Vec<JsValue>, JsValue> {
+        debug!("start={}, current={}", self.start, self.current_start);
         if self.start > self.current_start {
             // trim some from the front and add to the end
             let offset = (self.start - self.current_start) as usize;
@@ -229,7 +230,13 @@ impl ScrollView {
             let offset = (self.current_start - self.start) as usize;
             let end = self.current.len().saturating_sub(offset);
             self.current.drain(end..);
-            let i1 = self.len - self.current.len();
+            assert!(self.len >= self.current.len());
+            
+            // the remaining number of entries
+            let max_len = (client.end().saturating_sub(self.start)) as usize;
+
+            // don't try to add more than could be added
+            let i1 = self.len.min(max_len).saturating_sub(self.current.len());
             for i in (0 .. i1).rev() {
                 let n = self.start + i as u64;
                 if let Some(e) = client.get_entry(n) {
@@ -371,7 +378,7 @@ impl<'a> ArrayStr<'a> {
     }
     pub fn as_str(&self) -> &str {
         unsafe {
-            std::str::from_utf8_unchecked(&self.data)
+            std::str::from_utf8_unchecked(&self.data[..self.len])
         }
     }
 }
@@ -384,8 +391,10 @@ impl<'a> std::fmt::Write for ArrayStr<'a> {
         Ok(())
     }
     fn write_char(&mut self, c: char) -> Result<(), std::fmt::Error> {
-        if let Some(dst) = self.data.get_mut(self.len .. self.len + c.len_utf8()) {
+        let c_len = c.len_utf8();
+        if let Some(dst) = self.data.get_mut(self.len .. self.len + c_len) {
             c.encode_utf8(dst);
+            self.len += c_len;
         }
         Ok(())
     }

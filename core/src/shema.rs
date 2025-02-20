@@ -5,11 +5,15 @@ use soa_rs::{Soa, Soars};
 use std::io::{self, Cursor};
 use std::ops::Range;
 use pco::wrapped::{FileCompressor, FileDecompressor};
-use anyhow::Error;
+use anyhow::{bail, Error};
 use better_io::BetterBufRead;
 use serde::{Serialize, Deserialize};
 
+use crate::util::WriteAdapter;
 use crate::{types::{HashIpv6, HashStrings, HashStringsOpt, NumberSeries, TimeSeries}, util::ReadAdapter, DataBuilder, Options, Pos, RequestEntry};
+
+#[cfg(feature="encode")]
+use crate::DataBuilderEncode;
 
 macro_rules! define_type {
     (struct $builder:ident { $( $($field:ident : $type:ty )? $(> $field2:ident : $type2:ty = ( $( $part:ident: $t:ty ,)* ) )? ,)* }, item $item:ident, compressed $compressed:ident ) => {
@@ -99,46 +103,53 @@ macro_rules! define_type {
             pub fn range(&self, range: Range<usize>) -> impl Iterator<Item=$item> + ExactSizeIterator + DoubleEndedIterator + '_ {
                 self.soa.iter().skip(range.start).take(range.end - range.start).map(|i| self.decompress(i))
             }
-            pub fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, writer: W, opt: &Options) -> Result<([< $builder Sizes >], W), Error> {
+            #[cfg(feature="encode")]
+            pub fn write(&self, f: &FileCompressor, writer: BytesMut, opt: &Options) -> Result<BytesMut, Error> {
+                let scratch = Vec::with_capacity(8 * self.soa.len() + 100);
                 $(
                     $( 
-                        // println!("write {} at {}", stringify!($field), writer.pos());
-                        let ($field, writer) = self.$field.write(f, self.soa.$field(), writer, opt)?;
+                        //println!("write {}", stringify!($field));
+                        let ($field, mut scratch) = self.$field.write(f, self.soa.$field(), scratch, opt)?;
                     )?
                     $(
-                        // println!("write {} at {}", stringify!($field2), writer.pos());
-                        let ($field2, writer) = self.$field2.write(f, ( $( self.soa.$part() ),* ), writer, opt)?;
+                        //println!("write {}", stringify!($field2));
+                        let ($field2, mut scratch) = self.$field2.write(f, ( $( self.soa.$part() ),* ), scratch, opt)?;
                     )?
+                    let field_size = $( $field )? $( $field2 )?;
+
+                    //println!("at {}", writer.len());
+                    let mut writer = postcard::to_extend(&field_size, writer)?;
+                    //println!("data at {}", writer.len());
+                    writer.extend_from_slice(&scratch);
+                    scratch.clear();
                 )*
-                let s = [< $builder Sizes >] {
-                    rows: self.soa.len() as u32,
-                    $(
-                        $( $field )?
-                        $( $field2 )?
-                    ,)*
-                };
-                Ok((s, writer))
+                Ok(writer)
             }
-            pub fn read<'a, R: BetterBufRead + Pos>(f: &FileDecompressor, reader: R, size: [< $builder Sizes >]) -> Result<(Self, R), Error> {
+            pub fn read<'a>(f: &FileDecompressor, data: &'a [u8], len: usize) -> Result<(Self, &'a [u8]), Error> {
+                // let start = data.as_ptr() as usize;
+                // let pos = |d: &[u8]| d.as_ptr() as usize - start;
+
                 let mut soa = Soa::<$compressed>::default();
-                soa.reserve(size.rows as usize);
-                soa.extend(std::iter::repeat(Default::default()).take(size.rows as usize));
+                soa.reserve(len as usize);
+                soa.extend(std::iter::repeat(Default::default()).take(len as usize));
 
                 let [<  $compressed SlicesMut >] {
                     $( $( $field, )? $( $( $part, )* )? )*
                 } = soa.slices_mut();
                 $(
+                    //println!("field header at {}", pos(data));
+                    let (field_size, data) = take_from_bytes(data)?;
                     $(
-                        // println!("read {} at {}", stringify!($field), reader.pos());
-                        let ($field, reader) = <$type as DataBuilder>::read(f, $field, reader, size.$field)?;
+                        //println!("read {} at {}", stringify!($field), pos(data));
+                        let ($field, data) = <$type as DataBuilder>::read(f, $field, data, field_size)?;
                     )?
                     $(
-                        // println!("read {} at {}", stringify!($field2), reader.pos());
-                        let ($field2, reader) = <$type2 as DataBuilder>::read(
+                        //println!("read {} at {}", stringify!($field2), pos(data));
+                        let ($field2, data) = <$type2 as DataBuilder>::read(
                             f,
                             ( $( $part ),* ),
-                            reader,
-                            size.$field2
+                            data,
+                            field_size
                         )?;
                     )?
                 )*
@@ -149,11 +160,17 @@ macro_rules! define_type {
                         $( $field, )?
                         $( $field2, )*
                     )*
-                }, reader))
+                }, data))
             }
         }
         );
     };
+}
+
+#[derive(Serialize, Deserialize)]
+struct Header {
+    version: u32,
+    len: usize,
 }
 
 define_type!(
@@ -169,22 +186,31 @@ struct Builder {
 }, item BatchEntry, compressed CompressedEntry);
 
 impl Builder {
-    pub fn write_to(&self, writer: BytesMut, opt: &Options) -> BytesMut {
+    #[cfg(feature="encode")]
+    pub fn write_to(&self, mut writer: BytesMut, opt: &Options) -> BytesMut {
         let f = FileCompressor::default();
-        let buf = Vec::with_capacity(10 * self.len() + 100);
-        let buf = f.write_header(buf).unwrap();
-        let (sizes, buf) = self.write(&f, buf, opt).unwrap();
-        let mut writer = postcard::to_extend(&sizes, writer).unwrap();
-        writer.extend_from_slice(&buf);
+        writer.reserve(10 * self.len() + 100);
+
+        let header = Header {
+            version: 1,
+            len: self.soa.len()
+        };
+        let writer = postcard::to_extend(&header, writer).unwrap();
+        let writer = WriteAdapter(writer);
+        let WriteAdapter(writer) = f.write_header(writer).unwrap();
+        let writer = self.write(&f, writer, opt).unwrap();
         writer
     }
     pub fn from_slice(data: &[u8]) -> Result<Self, Error> {
-        let (size, rest) = take_from_bytes(data)?;
-        let reader = ReadAdapter::new(rest);
+        let (header, reader) = take_from_bytes::<Header>(data)?;
+        if header.version != 1 {
+            bail!("Version mismatch {} != 1", header.version);
+        }
         let (f, reader) = FileDecompressor::new(reader)?;
-        let (builder, reader) = Builder::read(&f, reader, size)?;
+        let (builder, reader) = Builder::read(&f, reader, header.len)?;
         Ok(builder)
     }
+    #[cfg(feature="encode")]
     pub fn to_vec(&self, options: &Options) -> Vec<u8> {
         let buf = BytesMut::new();
         let buf = self.write_to(buf, options);

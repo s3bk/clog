@@ -8,7 +8,10 @@ use pco::wrapped::{FileCompressor, FileDecompressor};
 use anyhow::{Error};
 use serde::{Deserialize, Serialize};
 use strum::FromRepr;
+
+#[cfg(feature="encode")]
 use types::compress_string;
+
 use util::IoWritePos;
 
 mod util;
@@ -77,14 +80,18 @@ pub trait DataBuilder: Sized {
     type Size;
     
     fn add<'a>(&mut self, item: Self::Item<'a>) -> Self::CompressedItem;
-    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, opt: &Options) -> Result<(Self::Size, W), Error>;
-    fn read<'a, R: BetterBufRead + Pos>(f: &FileDecompressor, slice: Self::SliceMut<'a>, reader: R, size: Self::Size) -> Result<(Self, R), Error>;
+    fn read<'a, 'r>(f: &FileDecompressor, slice: Self::SliceMut<'a>, data: &'r [u8], size: Self::Size) -> Result<(Self, &'r [u8]), Error>;
     fn get<'a>(&'a self, compressed: Self::CompressedItem) -> Option<Self::Item<'a>>;
+}
+
+#[cfg(feature="encode")]
+pub trait DataBuilderEncode: DataBuilder {
+    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, opt: &Options) -> Result<(Self::Size, W), Error>;
 }
 
 #[cfg(test)]
 fn read_log() -> impl Iterator<Item=RequestEntry> {
-    let file = File::open("../artisan/user.log").unwrap();
+    let file = File::open("../../artisan/user.log").unwrap();
     let mut reader = BufReader::new(file);
 
     let mut line = String::new();
@@ -102,6 +109,8 @@ fn read_log() -> impl Iterator<Item=RequestEntry> {
 
 #[test]
 fn test_log() {
+    use crate::shema::Builder;
+
     let mut builder = Builder::default();
     let entries: Vec<RequestEntry> = read_log().collect();
     for entry in entries.iter() {
@@ -137,15 +146,17 @@ pub struct Options {
     pub dict: &'static [u8]
 }
 
-fn test_dict(uris: &str, opt: &Options) -> usize {
-    let mut out = IoWritePos { writer: vec![], pos: 0 };
-    compress_string(&mut out, uris, &opt).unwrap();
-    out.writer.len()
-}
-
 #[test]
 fn test_compression() {
+    use crate::shema::Builder;
     use std::collections::HashSet;
+
+    fn test_dict(uris: &str, opt: &Options) -> usize {
+        let mut out = IoWritePos { writer: vec![], pos: 0 };
+        compress_string(&mut out, uris, &opt).unwrap();
+        out.writer.len()
+    }
+
     let mut uris = HashSet::with_hasher(BuildHasher::default());
     for entry in read_log() {
         uris.insert(entry.uri);

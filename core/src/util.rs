@@ -1,7 +1,8 @@
 use std::io;
 
 use better_io::BetterBufRead;
-use brotli::CustomRead;
+use brotli_decompressor::CustomRead;
+use bytes::BytesMut;
 
 use crate::Pos;
 
@@ -33,6 +34,21 @@ impl<W> Pos for IoWritePos<W> {
 impl Pos for Vec<u8> {
     fn pos(&self) -> usize {
         self.len()
+    }
+}
+
+pub struct WriteAdapter(pub BytesMut);
+impl std::io::Write for WriteAdapter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn write_all(&mut self, mut buf: &[u8]) -> io::Result<()> {
+        self.0.extend_from_slice(buf);
+        Ok(())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 

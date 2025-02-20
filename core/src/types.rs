@@ -4,8 +4,6 @@ use std::hash::Hash;
 
 use anyhow::{Context, Error};
 use better_io::BetterBufRead;
-use brotli::enc::{BrotliEncoderParams, StandardAlloc};
-use brotli::{interface, InputReferenceMut, IoReaderWrapper, IoWriterWrapper};
 use bytemuck::bytes_of_mut;
 use indexmap::IndexSet;
 use itertools::intersperse;
@@ -15,6 +13,9 @@ use pco::{wrapped::{FileCompressor, FileDecompressor}, DeltaSpec};
 use string_interner::backend::StringBackend;
 use string_interner::symbol::SymbolU32;
 use string_interner::{StringInterner, Symbol};
+
+#[cfg(feature="encode")]
+use crate::DataBuilderEncode;
 
 use crate::{util::BrotliReadAdapter, DataBuilder, Options, Pos, BuildHasher};
 
@@ -28,13 +29,14 @@ impl Default for HashStrings {
         HashStrings { set: StringInterner::with_hasher(BuildHasher::default()) }
     }
 }
+#[cfg(feature="encode")]
 fn write_string_set<'a, W: io::Write + Pos>(set: &StringInterner<StringBackend, BuildHasher>, f: &FileCompressor, slice: &'a [u32], mut writer: W, opt: &Options) -> Result<(u32, W), Error> {
     let strings: String = intersperse(set.iter().map(|(_, s)| s), "\n").collect();
     let len = compress_string(&mut writer, &strings, opt)?;
     let writer = compress_slice(f, writer, slice, DeltaSpec::None)?;
     Ok((len as u32, writer))
 }
-fn read_string_set<'a, R: BetterBufRead + Pos>(f: &FileDecompressor, slice: &'a mut [u32], reader: R, size: u32) -> Result<(StringInterner<StringBackend, BuildHasher>, R), Error> {
+fn read_string_set<'a, 'r>(f: &FileDecompressor, slice: &'a mut [u32], reader: &'r [u8], size: u32) -> Result<(StringInterner<StringBackend, BuildHasher>, &'r [u8]), Error> {
     let (strings, reader) = decompress_string(reader, size as usize)?;
     let mut set = StringInterner::with_hasher(BuildHasher::default());
     set.extend(strings.split("\n"));
@@ -52,15 +54,18 @@ impl DataBuilder for HashStrings {
         let sym = self.set.get_or_intern(item);
         sym.to_usize() as u32
     }
-    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, opt: &Options) -> Result<(Self::Size, W), Error> {
-        write_string_set(&self.set, f, &slice, writer, opt)
-    }
-    fn read<'a, R: BetterBufRead + Pos>(f: &FileDecompressor, slice: Self::SliceMut<'a>, reader: R, size: Self::Size) -> Result<(Self, R), Error> {
+    fn read<'a, 'r>(f: &FileDecompressor, slice: Self::SliceMut<'a>, reader: &'r [u8], size: Self::Size) -> Result<(Self, &'r [u8]), Error> {
         let (set, reader) = read_string_set(f, slice, reader, size)?;
         Ok((HashStrings { set }, reader))
     }
     fn get<'a>(&'a self, compressed: Self::CompressedItem) -> Option<Self::Item<'a>> {
         self.set.resolve(SymbolU32::try_from_usize(compressed as usize)?)
+    }
+}
+#[cfg(feature="encode")]
+impl DataBuilderEncode for HashStrings {
+    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, opt: &Options) -> Result<(Self::Size, W), Error> {
+        write_string_set(&self.set, f, &slice, writer, opt)
     }
 }
 
@@ -90,10 +95,7 @@ impl DataBuilder for HashStringsOpt {
             }
         }
     }
-    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, opt: &Options) -> Result<(Self::Size, W), Error> {
-        write_string_set(&self.set, f, &slice, writer, opt)
-    }
-    fn read<'a, R: BetterBufRead + Pos>(f: &FileDecompressor, slice: Self::SliceMut<'a>, reader: R, size: Self::Size) -> Result<(Self, R), Error> {
+    fn read<'a, 'r>(f: &FileDecompressor, slice: Self::SliceMut<'a>, reader: &'r [u8], size: Self::Size) -> Result<(Self, &'r [u8]), Error> {
         let (set, reader) = read_string_set(f, slice, reader, size)?;
         Ok((HashStringsOpt { set }, reader))
     }
@@ -102,6 +104,13 @@ impl DataBuilder for HashStringsOpt {
             0 => Some(None),
             i => Some(self.set.resolve(SymbolU32::try_from_usize(i as usize - 1)?.clone()))
         }
+    }
+}
+#[cfg(feature="encode")]
+impl DataBuilderEncode for HashStringsOpt {
+    #[cfg(feature="encode")]
+    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, opt: &Options) -> Result<(Self::Size, W), Error> {
+        write_string_set(&self.set, f, &slice, writer, opt)
     }
 }
 
@@ -144,16 +153,7 @@ impl DataBuilder for HashIpv6 {
         let (prefix_idx, _) = self.prefixes.insert_full(prefix);
         (prefix_idx as u32, suffix)
     }
-    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, (prefixes, suffixes): Self::Slice<'a>, writer: W, _opt: &Options) -> Result<(Self::Size, W), Error> {
-        let writer = compress_slice(f, writer, prefixes, DeltaSpec::TryLookback)?;
-        let mut writer = compress_slice(f, writer, suffixes, DeltaSpec::TryLookback)?;
-        
-        for i in self.prefixes.iter() {
-            writer.write_all(bytemuck::bytes_of(i))?;
-        }
-        Ok((self.prefixes.len() as u32, writer))
-    }
-    fn read<'a, R: BetterBufRead + Pos>(f: &FileDecompressor, (prefixes, suffixes): Self::SliceMut<'a>, reader: R, size: Self::Size) -> Result<(Self, R), Error> {
+    fn read<'a, 'r>(f: &FileDecompressor, (prefixes, suffixes): Self::SliceMut<'a>, reader: &'r [u8], size: Self::Size) -> Result<(Self, &'r [u8]), Error> {
         let reader = decompress_slice(f, reader, prefixes)?;
         let mut reader = decompress_slice(f, reader, suffixes)?;
 
@@ -170,6 +170,18 @@ impl DataBuilder for HashIpv6 {
         let prefix = self.prefixes.get_index(prefix_idx as usize)?;
         let bits = (prefix[0] as u128) << 96 | (prefix[1] as u128) << 64 | (prefix[2] as u128) << 32 | suffix as u128;
         Some(Ipv6Addr::from_bits(bits))
+    }
+}
+#[cfg(feature="encode")]
+impl DataBuilderEncode for HashIpv6 {
+    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, (prefixes, suffixes): Self::Slice<'a>, writer: W, _opt: &Options) -> Result<(Self::Size, W), Error> {
+        let writer = compress_slice(f, writer, prefixes, DeltaSpec::TryLookback)?;
+        let mut writer = compress_slice(f, writer, suffixes, DeltaSpec::TryLookback)?;
+        
+        for i in self.prefixes.iter() {
+            writer.write_all(bytemuck::bytes_of(i))?;
+        }
+        Ok((self.prefixes.len() as u32, writer))
     }
 }
 
@@ -192,16 +204,19 @@ impl<N: Number> DataBuilder for NumberSeries<N> {
     fn add<'a>(&mut self, item: Self::Item<'a>) -> Self::CompressedItem {
         item
     }
-    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, _opt: &Options) -> Result<(Self::Size, W), Error> {
-        let writer = compress_slice(f, writer, slice, DeltaSpec::Auto)?;
-        Ok(((), writer))
-    }
-    fn read<'a, R: BetterBufRead + Pos>(f: &FileDecompressor, slice: Self::SliceMut<'a>, reader: R, size: Self::Size) -> Result<(Self, R), Error> {
+    fn read<'a, 'r>(f: &FileDecompressor, slice: Self::SliceMut<'a>, reader: &'r [u8], size: Self::Size) -> Result<(Self, &'r [u8]), Error> {
         let reader = decompress_slice(f, reader, slice)?;
         Ok((NumberSeries { _m: PhantomData }, reader))
     }
     fn get<'a>(&'a self, compressed: Self::CompressedItem) -> Option<Self::Item<'a>> {
         Some(compressed)
+    }
+}
+#[cfg(feature="encode")]
+impl<N: Number> DataBuilderEncode for NumberSeries<N> {
+    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, _opt: &Options) -> Result<(Self::Size, W), Error> {
+        let writer = compress_slice(f, writer, slice, DeltaSpec::Auto)?;
+        Ok(((), writer))
     }
 }
 
@@ -222,15 +237,12 @@ impl DataBuilder for TimeSeries {
         }
         item.wrapping_sub(self.offset) as u32
     }
-    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, mut writer: W, opt: &Options) -> Result<(Self::Size, W), Error> {
-        writer.write_all(bytemuck::bytes_of(&self.offset))?;
-        let writer = compress_slice(f, writer, slice, DeltaSpec::TryConsecutive(1))?;
-        Ok(((), writer))
-    }
-    fn read<'a, R: BetterBufRead + Pos>(f: &FileDecompressor, slice: Self::SliceMut<'a>, mut reader: R, size: Self::Size) -> Result<(Self, R), Error> {
+    fn read<'a, 'r>(f: &FileDecompressor, slice: Self::SliceMut<'a>, reader: &'r [u8], size: Self::Size) -> Result<(Self, &'r [u8]), Error> {
         let mut offset = 0;
-        copy_to(&mut reader, bytes_of_mut(&mut offset))?;
-        let reader = decompress_slice(f, reader, slice)?;
+        let dest_bytes = bytes_of_mut(&mut offset);
+        let (bytes, rest) = reader.split_at(dest_bytes.len());
+        dest_bytes.copy_from_slice(bytes);
+        let reader = decompress_slice(f, rest, slice)?;
         Ok((TimeSeries { offset}, reader))
     }
     fn get<'a>(&'a self, compressed: Self::CompressedItem) -> Option<Self::Item<'a>> {
@@ -238,58 +250,45 @@ impl DataBuilder for TimeSeries {
     }
 }
 
+#[cfg(feature="encode")]
+impl DataBuilderEncode for TimeSeries {
+    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, mut writer: W, opt: &Options) -> Result<(Self::Size, W), Error> {
+        writer.write_all(bytemuck::bytes_of(&self.offset))?;
+        let writer = compress_slice(f, writer, slice, DeltaSpec::TryConsecutive(1))?;
+        Ok(((), writer))
+    }
+}
+
+#[cfg(feature="encode")]
 pub fn compress_string<W: io::Write + Pos>(writer: &mut W, strings: &str, opt: &Options) -> Result<usize, Error> {
+    use brotli::{enc::BrotliEncoderParams, BrotliCompress};
+
     // println!("write Brotli strings at {}", writer.pos());
 
     let mut params = BrotliEncoderParams::default();
-    params.favor_cpu_efficiency = true;
-    params.quality = opt.brotli_level as _;
+    params.quality = opt.brotli_level as i32;
 
-    let mut input_buffer: [u8; 4096] = [0; 4096];
-    let mut output_buffer: [u8; 4096] = [0; 4096];
-
-    let mut nop_callback = |_data: &mut interface::PredictionModeContextMap<InputReferenceMut>,
-                            _cmds: &mut [interface::StaticCommand],
-                            _mb: interface::InputPair,
-                            _m: &mut StandardAlloc| ();
-                            
-
-    let written = brotli::BrotliCompressCustomIoCustomDict(
-        &mut IoReaderWrapper(&mut strings.as_bytes()),
-        &mut IoWriterWrapper(writer),
-        &mut input_buffer[..],
-        &mut output_buffer[..],
-        &params,
-        StandardAlloc::default(),
-        &mut nop_callback,
-        opt.dict,
-        io::Error::new(io::ErrorKind::UnexpectedEof, "Unexpected EOF"),
-
+    let written = BrotliCompress(
+        &mut strings.as_bytes(),
+        writer,
+        &params
     ).unwrap();
     Ok(written)
 }
-fn decompress_string<R: BetterBufRead + Pos>(reader: R, len: usize) -> Result<(String, R), Error> {
-    use brotli::{HeapAlloc, HuffmanCode, IoWriterWrapper};
+
+fn decompress_string(reader: &[u8], len: usize) -> Result<(String, &[u8]), Error> {
+    use brotli_decompressor::BrotliDecompress;
 
     // println!("read Brotli strings at {}", reader.pos());
 
+    let (mut input, rest) = reader.split_at_checked(len).ok_or_else(|| anyhow::anyhow!("not enough input data"))?;
     let mut buffer: Vec<u8> = vec![];
-    let mut reader = BrotliReadAdapter { inner: reader, remaining: len };
-
-    let mut input_buffer = [0u8; 4096];
-    let mut output_buffer = [0u8; 4096];
-    brotli::BrotliDecompressCustomIo(
-        &mut reader,
-        &mut IoWriterWrapper(&mut buffer),
-        &mut input_buffer[..],
-        &mut output_buffer[..],
-        HeapAlloc::<u8>::new(0),
-        HeapAlloc::<u32>::new(0),
-        HeapAlloc::<HuffmanCode>::new(HuffmanCode{ bits:2, value: 1}),
-        io::Error::new(io::ErrorKind::UnexpectedEof, "Unexpected EOF")
+    BrotliDecompress(
+        &mut input,
+        &mut buffer,
     )?;
     let buffer = String::from_utf8(buffer)?;
-    Ok((buffer, reader.inner))
+    Ok((buffer, rest))
 }
 
 fn compress_slice<'a, T: Number, W: io::Write + Pos>(f: &FileCompressor, writer: W, slice: &'a [T], delta_spec: DeltaSpec) -> Result<W, Error> {
@@ -306,7 +305,8 @@ fn compress_slice<'a, T: Number, W: io::Write + Pos>(f: &FileCompressor, writer:
     let writer = time.write_page(0, writer)?;
     Ok(writer)
 }
-fn decompress_slice<'a, T: Number, R: BetterBufRead + Pos>(f: &FileDecompressor, reader: R, slice: &'a mut [T]) -> Result<R, Error> {
+
+fn decompress_slice<'a, 'r, T: Number>(f: &FileDecompressor, reader: &'r [u8], slice: &'a mut [T]) -> Result<&'r [u8], Error> {
     // println!("read [{}] at {}", type_name::<T>(), reader.pos());
 
     let (decompressor, reader) = f.chunk_decompressor(reader).context("chunk header")?;

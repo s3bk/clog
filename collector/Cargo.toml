@@ -12,3 +12,4 @@ postcard = { version = "*", features = ["use-std"] }
 
 [dependencies.clog_core]
 path = "../core"
+features = ["encode"]

@@ -18,6 +18,7 @@ impl ClientState {
 
                 match msg {
                     ClientMessage::FetchRange { start, end } => {
+                        println!("fetch {start}..{end}");
                         match self.handle {
                             Some(ref mut h) => {
                                 h.get_range(start, end).await;
@@ -28,9 +29,6 @@ impl ClientState {
 
                         }
                     },
-                    ClientMessage::Subscribe => {
-                        self.handle = self.log.attach().await.ok();
-                    }
                     ClientMessage::SubScribeWithBacklog { backlog } => {
                         self.handle = self.log.attach_with_backlog(backlog).await.ok();
                     }
@@ -47,7 +45,7 @@ impl ClientState {
     async fn handle_row(&mut self, r: Result<Bytes, broadcast::error::RecvError>) {
         match r {
             Ok(bytes) => {
-                self.ws.send(Message::Binary(bytes)).await;
+                self.ws.send(Message::Binary(bytes.into())).await;
             }
             Err(_) => {
                 self.send_msg(ServerMessage::Detached).await;
@@ -67,7 +65,7 @@ pub async fn handle_ws(ws: WebSocket, log: LogCollector) {
                     state.handle_packet(msg).await;
                 }
                 Some(bytes) = handle.batch_rx.recv() => {
-                    state.ws.send(Message::Binary(bytes)).await;
+                    state.ws.send(Message::Binary(bytes.into())).await;
                 }
                 r = handle.row_rx.recv() => {
                     state.handle_row(r).await;
