@@ -24,6 +24,8 @@ pub struct Client {
     current_start: u64,
 
     requested_start: u64,
+
+    reconnecting: bool,
 }
 
 #[wasm_bindgen]
@@ -44,7 +46,12 @@ impl Client {
             current_start: 0,
             requested_start: 0,
             websocket,
+            reconnecting: false,
         }
+    }
+    pub fn reconnect(&mut self, websocket: WebSocket) {
+        self.websocket = websocket;
+        self.reconnecting = true;
     }
     fn send(&self, msg: ClientMessage) {
         let data = postcard::to_stdvec(&msg).unwrap();
@@ -132,6 +139,11 @@ impl Client {
                     self.current_start = info.start;
                     self.requested_start = info.first_backlog;
                     debug!("SYNC to {}", info.start);
+
+                    if self.reconnecting {
+                        let end = self.end();
+                        self.send(ClientMessage::FetchRange { start: end, end: self.requested_start });
+                    }
                 }
                 None
             }
@@ -210,22 +222,15 @@ impl ScrollView {
     pub fn render(&mut self, client: &Client) -> Result<Vec<JsValue>, JsValue> {
         debug!("start={}, current={}", self.start, self.current_start);
         if self.start > self.current_start {
-            // trim some from the front and add to the end
+            // trim some from the front
             let offset = (self.start - self.current_start) as usize;
             if offset >= self.current.len() {
                 self.current.clear();
             } else {
                 self.current.drain(..offset);
             }
-            let i0 = self.current.len();
-            for i in i0 .. self.len {
-                let n = self.start + i as u64;
-                if let Some(e) = client.get_entry(n) {
-                    let val = self.produce(n, e)?;
-                    self.current.push_back(val);
-                }
-            }
-        } else {
+        }
+        if self.start < self.current_start {
             // trim from the end and add to the front
             let offset = (self.current_start - self.start) as usize;
             let end = self.current.len().saturating_sub(offset);
@@ -233,7 +238,7 @@ impl ScrollView {
             assert!(self.len >= self.current.len());
             
             // the remaining number of entries
-            let max_len = (client.end().saturating_sub(self.start)) as usize;
+            let max_len = (client.end().saturating_sub(self.current_start)) as usize;
 
             // don't try to add more than could be added
             let i1 = self.len.min(max_len).saturating_sub(self.current.len());
@@ -245,6 +250,16 @@ impl ScrollView {
                 }
             }
         }
+
+        let i0 = self.current.len();
+        for i in i0 .. self.len {
+            let n = self.start + i as u64;
+            if let Some(e) = client.get_entry(n) {
+                let val = self.produce(n, e)?;
+                self.current.push_back(val);
+            }
+        }
+
         self.current_start = self.start;
 
         Ok(self.current.iter().cloned().collect())

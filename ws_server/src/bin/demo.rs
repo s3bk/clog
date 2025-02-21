@@ -24,23 +24,23 @@ async fn ws_handler(
 async fn main() -> Result<(), Error> {
     let (collector, log_tx) = init_log(LogOptions {
         data_dir: Some(PathBuf::from("blocks")),
-        read_old: true
+        read_old: false
     }).await?;
     let state = Arc::new(App { log: collector.clone() });
 
-    /*
+    
     let data = test_data();
     spawn(async move {
         let mut data = data.into_iter();
-        for r in data.by_ref().take(10_000) {
+        for r in data.by_ref().take(2) {
             log_tx.send(r).await.unwrap();
         }
-        for r in data {
-            sleep(Duration::from_millis(10)).await;
+        for r in data.take(10) {
+            sleep(Duration::from_millis(1000)).await;
             log_tx.send(r).await.unwrap();
         }
     });
-    */
+    
 
     let routes = Router::new()
         .route("/ws", get(ws_handler))

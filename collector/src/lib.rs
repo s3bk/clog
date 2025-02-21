@@ -127,10 +127,10 @@ impl CollectorBackend {
         
         self.current.add(entry);
         if self.current.len() >= self.block_limit {
-            self.send_current();
+            self.send_current(None);
         }
     }
-    fn send_current(&mut self) {
+    fn send_current(&mut self, flush_tx: Option<oneshot::Sender<()>>) {
         if self.current.len() == 0 {
             return;
         }
@@ -142,6 +142,9 @@ impl CollectorBackend {
         spawn_blocking(move || {
             let data = encode_batch(builder_start, &builder, 11);
             let _ = tx.blocking_send(PastCommand::AddBuffer { start: builder_start, data });
+            if let Some(flush_tx) = flush_tx {
+                let _ = tx.blocking_send(PastCommand::Flush { tx: flush_tx });
+            }
         });
     }
     async fn send_sync(&self, tx: &Sender<Bytes>, first_backlog: u64) {
@@ -196,8 +199,8 @@ impl CollectorBackend {
     }
     async fn flush(&mut self) -> Result<(), Error> {
         let (tx, rx) = oneshot::channel();
-        self.send_current();
-        self.past_tx.send(PastCommand::Flush { tx }).await?;
+        self.send_current(Some(tx));
+
         rx.await?;
         Ok(())
     }
