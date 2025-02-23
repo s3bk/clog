@@ -256,7 +256,10 @@ impl PastManager {
                     println!("add buffer at {}", start);
                     if let Some(ref root) = self.dir {
                         let path = root.join(format!("block-{start}.clog"));
-                        tokio::fs::write(path, &data).await;
+                        let temp_path = path.with_extension("new");
+                        if tokio::fs::write(&temp_path, &data).await.is_ok() {
+                            tokio::fs::rename(&temp_path, path).await;
+                        }
                     }
                     self.past_buffers.insert(start, Some(data));
                 }
