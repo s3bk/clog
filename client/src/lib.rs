@@ -220,7 +220,6 @@ impl ScrollView {
         self.produce.call2(&JsValue::null(), &bigint(n), &wrap(e))
     }
     pub fn render(&mut self, client: &Client) -> Result<Vec<JsValue>, JsValue> {
-        debug!("start={}, current={}", self.start, self.current_start);
         if self.start > self.current_start {
             // trim some from the front
             let offset = (self.start - self.current_start) as usize;
@@ -349,10 +348,14 @@ impl FilterView {
         }
     }
 
-
-    pub fn set_filter(&mut self, s: &str) -> Result<(), JsValue> {
-        let filter = Filter::parse(&s).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        self.filter = Some(filter);
+    pub fn set_filter(&mut self, val: JsValue) -> Result<(), JsValue> {
+        if val.is_null() {
+            self.filter = None;
+        } else if let Some(s) = val.as_string() {
+            self.filter = Some(Filter::parse(&s).map_err(|e| JsValue::from_str(&e.to_string()))?);
+        } else {
+            return Err(JsValue::from_str("expects a string or null"));
+        }
         Ok(())
     }
 
@@ -453,7 +456,11 @@ fn format_ip(buf: &mut [u8; 40], ip: Ipv6Addr) -> ArrayStr {
     use std::fmt::Write;
 
     let mut s = ArrayStr::new(buf);
-    write!(s, "{ip}").unwrap();
+    if let Some(ipv4) = ip.to_ipv4_mapped() {
+        write!(s, "{ipv4}").unwrap();
+    } else {
+        write!(s, "{ip}").unwrap();
+    }
     s
 }
 

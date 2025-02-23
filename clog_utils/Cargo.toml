@@ -1,0 +1,15 @@
+[package]
+name = "clog_utils"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "*", features = ["derive"] }
+clog_core = { path = "../core", features = ["encode"] }
+clog_collector = { path = "../collector" }
+anyhow = "*"
+futures = "*"
+tokio = { version = "*", features = ["fs", "sync", "rt-multi-thread", "io-util"] }
+bytes = "*"
+serde_json = "*"
+itertools = "*"

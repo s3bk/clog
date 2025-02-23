@@ -54,6 +54,15 @@ macro_rules! define_type {
         }
 
         impl $builder {
+            pub fn with_capacity(capacity: usize) -> Self {
+                Self {
+                    $(
+                        $( $field: <$type>::default() )?
+                        $( $field2: <$type2>::default() )?
+                    ,)*
+                    soa: Soa::with_capacity(capacity)
+                }
+            }
             pub fn add(&mut self, item: $item) {
                 $(
                     $( let $field = self.$field.add(item.$field); )?

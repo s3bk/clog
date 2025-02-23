@@ -2,7 +2,7 @@
 resolver = "3"
 
 members = [
-    "client", "collector",
+    "client", "clog_utils", "collector",
     "core",
     "ws_api",
     "ws_server"

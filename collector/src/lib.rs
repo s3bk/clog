@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, BTreeSet, VecDeque}, io::Cursor, mem::replace, path::PathBuf, sync::Arc};
+use std::{collections::{BTreeMap, BTreeSet, VecDeque}, io::Cursor, mem::replace, ops::Range, path::{Path, PathBuf}, sync::Arc};
 use anyhow::{bail, Error};
 use bytes::{Bytes, BytesMut};
 use tokio::{select, sync::{broadcast, mpsc::{channel, Receiver, Sender}, oneshot}, task::spawn_blocking};
@@ -37,6 +37,10 @@ impl LogCollector {
         let (tx, rx) = oneshot::channel();
         self.tx.send(ClientMsg::Flush { tx }).await?;
         rx.await?.map_err(|_| anyhow::anyhow!("flush not successful"))?;
+        Ok(())
+    }
+    pub async fn get_range(&self, range: Range<u64>, tx: Sender<Bytes>) -> Result<(), Error> {
+        self.tx.send(ClientMsg::GetRange { start: range.start, end: range.end, tx }).await?;
         Ok(())
     }
 }
@@ -85,18 +89,23 @@ pub async fn init_log(options: LogOptions) -> Result<(LogCollector, Sender<Reque
         }
     }
 
-
     tokio::spawn(async move {
         loop {
             select! {
-                Some(e) = event_rx.recv() => {
-                    backend.push((&e).into());
+                r = event_rx.recv() => {
+                    match r {
+                        Some(e) => backend.push((&e).into()),
+                        None => break
+                    }
                 }
                 Some(msg) = client_rx.recv() => {
                     backend.handle_msg(msg).await;
                 }
-                else => break
+                else => return
             }
+        }
+        while let Some(msg) = client_rx.recv().await {
+            backend.handle_msg(msg).await;
         }
     });
 
@@ -206,7 +215,7 @@ impl CollectorBackend {
     }
 }
 
-fn encode_batch(start: u64, builder: &Builder, brotli_level: u8) -> Bytes {
+pub fn encode_batch(start: u64, builder: &Builder, brotli_level: u8) -> Bytes {
     let mut buffer = BytesMut::with_capacity(builder.len() * 10);
     PacketType::Batch.write_to(&mut buffer);
     let buffer = postcard::to_extend(&BatchHeader {
@@ -216,7 +225,7 @@ fn encode_batch(start: u64, builder: &Builder, brotli_level: u8) -> Bytes {
     let data = builder.write_to(buffer, &clog_core::Options { brotli_level, dict: &[] });
     data.into()
 }
-fn decode_batch(data: &[u8]) -> Result<(u64, Builder), Error> {
+pub fn decode_batch(data: &[u8]) -> Result<(u64, Builder), Error> {
     let (&ptype, data) = data.split_first().ok_or(anyhow::anyhow!("no data"))?;
 
     if ptype != PacketType::Batch as u8 {
@@ -253,6 +262,7 @@ impl PastManager {
                 }
                 PastCommand::Get { start, end, tx } => {
                     println!("GET {start}..{end}");
+
                     for (&pos, data) in self.past_buffers.range_mut(..end).rev() {
                         if data.is_none() {
                             if let Some(ref dir) = self.dir {
@@ -312,3 +322,4 @@ impl PastManager {
         Ok(())
     }
 }
+
