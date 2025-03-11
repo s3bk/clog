@@ -25,7 +25,7 @@ itertools = "*"
 anyhow = "*"
 serde = { version = "1", features = ["derive"] }
 string-interner = "*"
-bytes = "*"
+bytes = { version = "*", features = ["serde"] }
 postcard = { version = "*", features = ["use-std"] }
 strum = { version = "*", features = ["derive"] }
 regex = { version = "*" }

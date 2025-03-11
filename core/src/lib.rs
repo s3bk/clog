@@ -2,17 +2,13 @@ use std::{fs::File, io, net::IpAddr, usize};
 use std::io::{BufReader, BufWriter, BufRead, Write};
 
 use better_io::BetterBufRead;
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use istring::SmallString;
 use pco::wrapped::{FileCompressor, FileDecompressor};
 use anyhow::{Error};
 use serde::{Deserialize, Serialize};
+use shema::BatchEntry;
 use strum::FromRepr;
-
-#[cfg(feature="encode")]
-use types::compress_string;
-
-use util::IoWritePos;
 
 mod util;
 pub mod shema;
@@ -35,6 +31,7 @@ pub struct RequestEntry {
     pub ip: IpAddr,
     pub port: u16,
     pub time: u64,
+    pub body: Option<Bytes>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -125,19 +122,54 @@ fn test_log() {
         let data = builder.to_vec(&opt);
         println!("q={q}, size={}", data.len());
     }
-
+    
     let data = builder.to_vec(&Options::default());
     println!("compressed: {} bytes", data.len());
     std::fs::write("user.data", &data).unwrap();
 
     println!("{} bytes per row", data.len() as f64 / builder.len() as f64);
-    let b2 = Builder::from_slice(&data);
+    let b2 = Builder::from_slice(&data).unwrap();
 
     /*
     for item in b2.iter() {
         println!("{item:?}");
     }
      */
+}
+
+#[test]
+fn test_log2() {
+    use crate::shema::Builder;
+
+    let mut builder = Builder::default();
+    let entries: Vec<RequestEntry> = read_log().collect();
+    for (i, entry) in entries.iter().enumerate() {
+        let mut e: BatchEntry = entry.into();
+        if i % 16 == 0 {
+            e.body = Some(b"hello world");
+        }
+        builder.add(e);
+    }
+    println!("parsing complete");
+
+    for q in 1 .. 12 {
+        let opt = Options {
+            brotli_level: q, .. Default::default()
+        };
+        let data = builder.to_vec(&opt);
+        println!("q={q}, size={}", data.len());
+    }
+    
+    let data = builder.to_vec(&Options::default());
+    println!("compressed: {} bytes", data.len());
+    std::fs::write("user.data", &data).unwrap();
+
+    println!("{} bytes per row", data.len() as f64 / builder.len() as f64);
+    let b2 = Builder::from_slice(&data).unwrap();
+
+    for item in b2.iter().step_by(16) {
+        println!("{:?}", item);
+    }
 }
 
 #[derive(Default)]
@@ -150,6 +182,9 @@ pub struct Options {
 fn test_compression() {
     use crate::shema::Builder;
     use std::collections::HashSet;
+    use types::compress_string;
+    use util::IoWritePos;
+
 
     fn test_dict(uris: &str, opt: &Options) -> usize {
         let mut out = IoWritePos { writer: vec![], pos: 0 };

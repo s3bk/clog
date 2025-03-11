@@ -9,14 +9,19 @@ use anyhow::{bail, Error};
 use better_io::BetterBufRead;
 use serde::{Serialize, Deserialize};
 
+use crate::types::DataSeries;
 use crate::util::WriteAdapter;
 use crate::{types::{HashIpv6, HashStrings, HashStringsOpt, NumberSeries, TimeSeries}, util::ReadAdapter, DataBuilder, Options, Pos, RequestEntry};
 
 #[cfg(feature="encode")]
 use crate::DataBuilderEncode;
 
+macro_rules! enabled {
+    ($ver:expr, $v:ident) => ($ver >= $v);
+    ($ver:expr,) => (true);
+}
 macro_rules! define_type {
-    (struct $builder:ident { $( $($field:ident : $type:ty )? $(> $field2:ident : $type2:ty = ( $( $part:ident: $t:ty ,)* ) )? ,)* }, item $item:ident, compressed $compressed:ident ) => {
+    (struct $builder:ident { $($(@ $v:ident)? $( $field:ident : $type:ty )? $(> $field2:ident : $type2:ty = ( $( $part:ident: $t:ty ,)* ) )? ,)* }, item $item:ident, compressed $compressed:ident ) => {
         paste!(
         #[derive(Default, Clone)]
         pub struct $builder {
@@ -134,7 +139,7 @@ macro_rules! define_type {
                 )*
                 Ok(writer)
             }
-            pub fn read<'a>(f: &FileDecompressor, data: &'a [u8], len: usize) -> Result<(Self, &'a [u8]), Error> {
+            pub fn read<'a>(f: &FileDecompressor, data: &'a [u8], len: usize, version: u32) -> Result<(Self, &'a [u8]), Error> {
                 // let start = data.as_ptr() as usize;
                 // let pos = |d: &[u8]| d.as_ptr() as usize - start;
 
@@ -146,28 +151,34 @@ macro_rules! define_type {
                     $( $( $field, )? $( $( $part, )* )? )*
                 } = soa.slices_mut();
                 $(
-                    //println!("field header at {}", pos(data));
-                    let (field_size, data) = take_from_bytes(data)?;
-                    $(
-                        //println!("read {} at {}", stringify!($field), pos(data));
-                        let ($field, data) = <$type as DataBuilder>::read(f, $field, data, field_size)?;
-                    )?
-                    $(
-                        //println!("read {} at {}", stringify!($field2), pos(data));
-                        let ($field2, data) = <$type2 as DataBuilder>::read(
-                            f,
-                            ( $( $part ),* ),
-                            data,
-                            field_size
-                        )?;
-                    )?
+                    let (field, data) = if enabled!(version, $($v)?) {
+                        //println!("field header at {}", pos(data));
+                        let (field_size, data) = take_from_bytes(data)?;
+                        $(
+                            //println!("read {} at {}", stringify!($field), pos(data));
+                            <$type as DataBuilder>::read(f, $field, data, field_size)?
+                        )?
+                        $(
+                            //println!("read {} at {}", stringify!($field2), pos(data));
+                            <$type2 as DataBuilder>::read(
+                                f,
+                                ( $( $part ),* ),
+                                data,
+                                field_size
+                            )?
+                        )?
+                    } else {
+                        (Default::default(), data)
+                    };
+                    $( let $field = field; )?
+                    $( let $field2 = field; )?
                 )*
                 
                 Ok(($builder {
                     soa,
                     $(
                         $( $field, )?
-                        $( $field2, )*
+                        $( $field2, )?
                     )*
                 }, data))
             }
@@ -182,6 +193,8 @@ struct Header {
     len: usize,
 }
 
+const V2: u32 = 2;
+
 define_type!(
 struct Builder {
     status: NumberSeries<u16>,
@@ -192,6 +205,7 @@ struct Builder {
     > ip: HashIpv6 = (ip_pre_idx: u32, ip_suffix: u32,),
     port: NumberSeries<u16>,
     time: TimeSeries,
+    @V2 body: DataSeries,
 }, item BatchEntry, compressed CompressedEntry);
 
 impl Builder {
@@ -201,7 +215,7 @@ impl Builder {
         writer.reserve(10 * self.len() + 100);
 
         let header = Header {
-            version: 1,
+            version: V2,
             len: self.soa.len()
         };
         let writer = postcard::to_extend(&header, writer).unwrap();
@@ -212,11 +226,9 @@ impl Builder {
     }
     pub fn from_slice(data: &[u8]) -> Result<Self, Error> {
         let (header, reader) = take_from_bytes::<Header>(data)?;
-        if header.version != 1 {
-            bail!("Version mismatch {} != 1", header.version);
-        }
+
         let (f, reader) = FileDecompressor::new(reader)?;
-        let (builder, reader) = Builder::read(&f, reader, header.len)?;
+        let (builder, reader) = Builder::read(&f, reader, header.len, header.version)?;
         Ok(builder)
     }
     #[cfg(feature="encode")]
@@ -247,7 +259,8 @@ impl<'a> From<&'a RequestEntry> for BatchEntry<'a> {
             referer: e.referer.as_deref(),
             ip,
             port: e.port,
-            time: e.time
+            time: e.time,
+            body: e.body.as_deref(),
         }
     }
 }

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = { version = "*", features = ["ws", "macros"] }
+axum = { version = "0.8.1", features = ["ws", "macros"] }
 clog_core = { path = "../core" }
 clog_collector = { path = "../collector" }
 clog_ws_api = { path = "../ws_api" }

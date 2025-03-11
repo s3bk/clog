@@ -115,8 +115,15 @@ impl Client {
 
         match typ {
             PacketType::Batch => {
+                debug!("batch");
                 let (header, rest) = postcard::take_from_bytes::<BatchHeader>(rest).ok()?;
-                let builder = Builder::from_slice(rest).ok()?;
+                let builder = match Builder::from_slice(rest) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        debug!("batch {}: error: {e:?}", header.start);
+                        return None;
+                    }
+                };
                 let range = header.start .. header.start + builder.len() as u64;
                 if header.start < self.requested_start {
                     self.requested_start = header.start;
@@ -138,7 +145,7 @@ impl Client {
                 if let Ok(info) = postcard::from_bytes::<SyncHeader>(rest) {
                     self.current_start = info.start;
                     self.requested_start = info.first_backlog;
-                    debug!("SYNC to {}", info.start);
+                    debug!("SYNC to {}, backlog at {}", info.start, info.first_backlog);
 
                     if self.reconnecting {
                         let end = self.end();
@@ -383,7 +390,7 @@ impl FilterView {
 
 #[wasm_bindgen(module="/src/lib.js")]
 extern "C" {
-    pub fn make_entry(status: u16, method: &str, uri: &str, ua: &str, referer: &str, ip: &str, port: u16, time: &str) -> JsValue;
+    pub fn make_entry(status: u16, method: &str, uri: &str, ua: &str, referer: &str, ip: &str, port: u16, time: &str, body: Option<&[u8]>) -> JsValue;
 }
 
 struct ArrayStr<'a> {
@@ -432,7 +439,8 @@ fn wrap(e: BatchEntry<'_>) -> JsValue {
         e.referer.unwrap_or_default(),
         ip.as_str(),
         e.port,
-        time.as_str()
+        time.as_str(),
+        e.body
     )
 }
 
@@ -466,4 +474,12 @@ fn format_ip(buf: &mut [u8; 40], ip: Ipv6Addr) -> ArrayStr {
 
 fn bigint(n: u64) -> JsValue {
     BigInt::from(n).unchecked_into()
+}
+
+#[wasm_bindgen]
+pub fn hex_view(data: &[u8]) -> String {
+    use hexplay::HexViewBuilder;
+    HexViewBuilder::new(&data)
+        .row_width(16)
+        .finish().to_string()
 }

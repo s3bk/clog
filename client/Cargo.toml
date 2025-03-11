@@ -12,6 +12,7 @@ clog_core = { path = "../core", features = ["encode"] }
 clog_ws_api = { path = "../ws_api" }
 serde = { version = "*", features = ["derive"] }
 time = "*"
+hexplay = "*"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -69,6 +69,63 @@ impl DataBuilderEncode for HashStrings {
     }
 }
 
+#[derive(Default, Clone)]
+pub struct DataSeries {
+    data: Vec<u8>,
+    offsets: Vec<u32>,
+}
+impl DataBuilder for DataSeries {
+    type CompressedItem = u32;
+    type Item<'a> = Option<&'a [u8]>;
+    type Slice<'a> = &'a [u32];
+    type SliceMut<'a> = &'a mut [u32];
+    type Size = (u32, u32); // offsets len, compressed data len
+
+    fn add<'a>(&mut self, item: Self::Item<'a>) -> Self::CompressedItem {
+        if let Some(data) = item {
+            self.data.extend_from_slice(data);
+            self.offsets.push(self.data.len() as u32);
+            self.offsets.len() as u32
+        } else {
+            0
+        }
+    }
+    fn get<'a>(&'a self, compressed: Self::CompressedItem) -> Option<Self::Item<'a>> {
+        if compressed == 0 {
+            Some(None)
+        } else {
+            let i = compressed as usize;
+            let start = if i == 1 { 0 } else {
+                *self.offsets.get(i - 2)? as usize
+            };
+            let end = *self.offsets.get(i - 1)? as usize;
+            Some(Some(self.data.get(start .. end)?))
+        }
+    }
+    fn read<'a, 'r>(f: &FileDecompressor, slice: Self::SliceMut<'a>, reader: &'r [u8], (offsets_len, cdata_len): Self::Size) -> Result<(Self, &'r [u8]), Error> {
+        let mut offsets = vec![0; offsets_len as usize];
+        let mut reader = decompress_slice(f, reader, slice)?;
+        if offsets_len > 0 {
+            reader = decompress_slice(f, reader, &mut offsets)?;
+        }
+        let (data, reader) = decompress_data(reader, cdata_len as usize)?;
+        Ok((DataSeries {
+            data, offsets
+        }, reader))
+    }
+}
+
+#[cfg(feature="encode")]
+impl DataBuilderEncode for DataSeries {
+    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, opt: &Options) -> Result<(Self::Size, W), Error> {
+        let mut writer = compress_slice(f, writer, slice, DeltaSpec::TryLookback)?;
+        if self.offsets.len() > 0 {
+            writer = compress_slice(f, writer, &self.offsets, DeltaSpec::TryConsecutive(2))?;
+        }
+        let cdata_len = compress_data(&mut writer, &self.data, opt)? as u32;
+        Ok((((self.offsets.len() as u32, cdata_len)), writer))
+    }
+}
 
 #[derive(Clone)]
 pub struct HashStringsOpt {
@@ -261,6 +318,10 @@ impl DataBuilderEncode for TimeSeries {
 
 #[cfg(feature="encode")]
 pub fn compress_string<W: io::Write + Pos>(writer: &mut W, strings: &str, opt: &Options) -> Result<usize, Error> {
+    compress_data(writer, strings.as_bytes(), opt)
+}
+#[cfg(feature="encode")]
+pub fn compress_data<W: io::Write + Pos>(writer: &mut W, mut data: &[u8], opt: &Options) -> Result<usize, Error> {
     use brotli::{enc::BrotliEncoderParams, BrotliCompress};
 
     // println!("write Brotli strings at {}", writer.pos());
@@ -269,7 +330,7 @@ pub fn compress_string<W: io::Write + Pos>(writer: &mut W, strings: &str, opt: &
     params.quality = opt.brotli_level as i32;
 
     let written = BrotliCompress(
-        &mut strings.as_bytes(),
+        &mut data,
         writer,
         &params
     ).unwrap();
@@ -277,6 +338,11 @@ pub fn compress_string<W: io::Write + Pos>(writer: &mut W, strings: &str, opt: &
 }
 
 fn decompress_string(reader: &[u8], len: usize) -> Result<(String, &[u8]), Error> {
+    let (buffer, rest) = decompress_data(reader, len)?;
+    let buffer = String::from_utf8(buffer)?;
+    Ok((buffer, rest))
+}
+fn decompress_data(reader: &[u8], len: usize) -> Result<(Vec<u8>, &[u8]), Error> {
     use brotli_decompressor::BrotliDecompress;
 
     // println!("read Brotli strings at {}", reader.pos());
@@ -287,7 +353,6 @@ fn decompress_string(reader: &[u8], len: usize) -> Result<(String, &[u8]), Error
         &mut input,
         &mut buffer,
     )?;
-    let buffer = String::from_utf8(buffer)?;
     Ok((buffer, rest))
 }
 

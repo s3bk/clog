@@ -73,7 +73,7 @@ impl ClientState {
             self.closed = true;
         }
         self.last_ping += 1;
-        self.ws.send(Message::Ping(self.last_ping.to_be_bytes().as_slice().into())).await;
+        self.ws.send(Message::Ping(Bytes::copy_from_slice(&self.last_ping.to_be_bytes()))).await;
     }
 }
 
