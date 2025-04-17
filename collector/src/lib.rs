@@ -357,7 +357,7 @@ impl PastManager {
                     for (&pos, data) in self.past_buffers.range_mut(..end).rev() {
                         if data.is_none() {
                             if let Some(ref dir) = self.dir {
-                                let path = dir.join(format!("block-{start}.clog"));
+                                let path = dir.join(format!("block-{pos}.clog"));
                                 println!("reading {path:?}");
                                 if let Ok(new) = tokio::fs::read(path).await {
                                     let bytes = Bytes::from(new);
@@ -367,6 +367,7 @@ impl PastManager {
                         };
                         if let Some(data) = data {
                             let _ = tx.send(data.clone()).await;
+                            println!("  send {} bytes", data.len());
                         }
                         if pos < start {
                             break;
