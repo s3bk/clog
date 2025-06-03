@@ -13,6 +13,7 @@ clog_ws_api = { path = "../ws_api" }
 serde = { version = "*", features = ["derive"] }
 time = "*"
 hexplay = "*"
+itertools = "*"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

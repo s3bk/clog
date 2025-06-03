@@ -7,8 +7,8 @@ edition = "2024"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
-encode = ["dep:brotli"]
+default = ["encode"]
+encode = ["dep:brotli", "dep:http"]
 
 [dependencies]
 chute = "*"
@@ -32,15 +32,17 @@ regex = { version = "*" }
 strsim = "*"
 lalrpop-util = { version = "0.22.1", features = ["lexer"] }
 time = { version = "*", features = ["wasm-bindgen"] }
+http = { version = "*", optional = true }
+clog_derive = { path = "../clog_derive" }
 
 # Add a build-time dependency on the lalrpop library:
 [build-dependencies]
 lalrpop = "0.22.1"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(all(target_feature="aes", target_feature="sse2"))'.dependencies]
 gxhash = "*"
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(not(all(target_feature="aes", target_feature="sse2")))'.dependencies]
 rapidhash = "*"
 
 [dev-dependencies]

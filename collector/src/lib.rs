@@ -20,7 +20,7 @@ use tokio::{
 
 use clog_core::{
     BatchHeader, PacketType, RequestEntry, SyncHeader,
-    shema::{BatchEntry, Builder},
+    shema::{BatchEntry, Builder, Shema},
 };
 
 enum ClientMsg {

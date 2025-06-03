@@ -1,7 +1,9 @@
 use bytes::BytesMut;
 use paste::paste;
-use postcard::take_from_bytes;
+use serde::de::DeserializeOwned;
 use soa_rs::{Soa, Soars};
+use core::slice;
+use std::alloc::Layout;
 use std::io::{self, Cursor};
 use std::ops::Range;
 use pco::wrapped::{FileCompressor, FileDecompressor};
@@ -11,237 +13,116 @@ use serde::{Serialize, Deserialize};
 
 use crate::types::DataSeries;
 use crate::util::WriteAdapter;
-use crate::{types::{HashIpv6, HashStrings, HashStringsOpt, NumberSeries, TimeSeries}, util::ReadAdapter, DataBuilder, Options, Pos, RequestEntry};
+use crate::{types::{HashIpv6, HashStrings, HashStringsOpt, NumberSeries, TimeSeries, StringMap}, util::ReadAdapter, DataBuilder, Options, Pos, RequestEntry, 
+    slice::{SliceTrait, Owned},
+    Input
+};
+use crate as clog;
 
 #[cfg(feature="encode")]
 use crate::DataBuilderEncode;
 
-macro_rules! enabled {
-    ($ver:expr, $v:ident) => ($ver >= $v);
-    ($ver:expr,) => (true);
-}
-macro_rules! define_type {
-    (struct $builder:ident { $($(@ $v:ident)? $( $field:ident : $type:ty )? $(> $field2:ident : $type2:ty = ( $( $part:ident: $t:ty ,)* ) )? ,)* }, item $item:ident, compressed $compressed:ident ) => {
-        paste!(
-        #[derive(Default, Clone)]
-        pub struct $builder {
-            $(
-                $( $field: $type )?
-                $( $field2: $type2 )?
-            ,)*
-            soa: Soa<$compressed>
-        }
 
-        #[derive(Debug, Clone, Serialize, Deserialize)]
-        #[serde(bound(deserialize = "'de: 'a"))]
-        pub struct $item<'a> {
-            $(
-                $( pub $field: <$type as DataBuilder>::Item<'a> )?
-                $( pub $field2: <$type2 as DataBuilder>::Item<'a> )?
-            ,)*
-        }
-        
-        #[derive(Soars, PartialEq, Debug, Copy, Clone, Default)]
-        pub struct $compressed {
-            $(
-                $( $field: <$type as DataBuilder>::CompressedItem )?
-                $( $( $part: $t ),* )?
-            ,)*
-        }
-
-        #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
-        pub struct [< $builder Sizes >] {
-            rows: u32,
-            $(
-                $( $field: <$type as DataBuilder>::Size )?
-                $( $field2: <$type2 as DataBuilder>::Size )?
-            ,)*
-        }
-
-        impl $builder {
-            pub fn with_capacity(capacity: usize) -> Self {
-                Self {
-                    $(
-                        $( $field: <$type>::default() )?
-                        $( $field2: <$type2>::default() )?
-                    ,)*
-                    soa: Soa::with_capacity(capacity)
-                }
-            }
-            pub fn add(&mut self, item: $item) {
-                $(
-                    $( let $field = self.$field.add(item.$field); )?
-                    $( 
-                        let ( $( $part ,)* ) = self.$field2.add(item.$field2);
-                    )?
-                )*
-                let compressed = $compressed {
-                    $(
-                        $( $field, )?
-                        $( 
-                            $( $part, )*
-                        )?
-                    )*
-                };
-                self.soa.push(compressed);
-            }
-            pub fn get(&self, idx: usize) -> Option<$item> {
-                let [< $compressed Ref >] {
-                    $( $( $field, )? $( $( $part, )* )? )*
-                } = self.soa.get(idx)?;
-                Some($item {
-                    $(
-                        $( $field: self.$field.get(*$field)?, )?
-                        $( 
-                            $field2: self.$field2.get(( $( *$part ,)* ))?,
-                        )?
-                    )*
-                })
-            }
-            fn decompress(&self, c: [< $compressed Ref >]) -> $item {
-                let [< $compressed Ref >] {
-                    $( $( $field, )? $( $( $part, )* )? )*
-                } = c;
-                $item {
-                    $(
-                        $( $field: self.$field.get(*$field).expect(stringify!($field)), )?
-                        $( 
-                            $field2: self.$field2.get(( $( *$part ,)* )).expect(stringify!($field2)),
-                        )?
-                    )*
-                }
-            }
-            pub fn iter(&self) -> impl Iterator<Item=$item> + ExactSizeIterator + '_ {
-                self.soa.iter().map(|i| self.decompress(i))
-            }
-            pub fn range(&self, range: Range<usize>) -> impl Iterator<Item=$item> + ExactSizeIterator + DoubleEndedIterator + '_ {
-                self.soa.iter().skip(range.start).take(range.end - range.start).map(|i| self.decompress(i))
-            }
-            #[cfg(feature="encode")]
-            pub fn write(&self, f: &FileCompressor, writer: BytesMut, opt: &Options) -> Result<BytesMut, Error> {
-                let scratch = Vec::with_capacity(8 * self.soa.len() + 100);
-                $(
-                    $( 
-                        //println!("write {}", stringify!($field));
-                        let ($field, mut scratch) = self.$field.write(f, self.soa.$field(), scratch, opt)?;
-                    )?
-                    $(
-                        //println!("write {}", stringify!($field2));
-                        let ($field2, mut scratch) = self.$field2.write(f, ( $( self.soa.$part() ),* ), scratch, opt)?;
-                    )?
-                    let field_size = $( $field )? $( $field2 )?;
-
-                    //println!("at {}", writer.len());
-                    let mut writer = postcard::to_extend(&field_size, writer)?;
-                    //println!("data at {}", writer.len());
-                    writer.extend_from_slice(&scratch);
-                    scratch.clear();
-                )*
-                Ok(writer)
-            }
-            pub fn read<'a>(f: &FileDecompressor, data: &'a [u8], len: usize, version: u32) -> Result<(Self, &'a [u8]), Error> {
-                // let start = data.as_ptr() as usize;
-                // let pos = |d: &[u8]| d.as_ptr() as usize - start;
-
-                let mut soa = Soa::<$compressed>::default();
-                soa.reserve(len as usize);
-                soa.extend(std::iter::repeat(Default::default()).take(len as usize));
-
-                let [<  $compressed SlicesMut >] {
-                    $( $( $field, )? $( $( $part, )* )? )*
-                } = soa.slices_mut();
-                $(
-                    let (field, data) = if enabled!(version, $($v)?) {
-                        //println!("field header at {}", pos(data));
-                        let (field_size, data) = take_from_bytes(data)?;
-                        $(
-                            //println!("read {} at {}", stringify!($field), pos(data));
-                            <$type as DataBuilder>::read(f, $field, data, field_size)?
-                        )?
-                        $(
-                            //println!("read {} at {}", stringify!($field2), pos(data));
-                            <$type2 as DataBuilder>::read(
-                                f,
-                                ( $( $part ),* ),
-                                data,
-                                field_size
-                            )?
-                        )?
-                    } else {
-                        (Default::default(), data)
-                    };
-                    $( let $field = field; )?
-                    $( let $field2 = field; )?
-                )*
-                
-                Ok(($builder {
-                    soa,
-                    $(
-                        $( $field, )?
-                        $( $field2, )?
-                    )*
-                }, data))
-            }
-        }
-        );
-    };
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct Header {
     version: u32,
-    len: usize,
+    len: u32,
 }
 
 const V2: u32 = 2;
+const V3: u32 = 3;
 
-define_type!(
-struct Builder {
+const SHEMA_VERSION: u32 = V3;
+
+#[derive(clog_derive::Shema)]
+pub struct ShemaImpl {
     status: NumberSeries<u16>,
     method: HashStrings,
     uri: HashStrings,
+    #[clog(max_version=V2)]
     ua: HashStringsOpt,
+    #[clog(max_version=V2)]
     referer: HashStringsOpt,
-    > ip: HashIpv6 = (ip_pre_idx: u32, ip_suffix: u32,),
+    ip: HashIpv6,
     port: NumberSeries<u16>,
     time: TimeSeries,
-    @V2 body: DataSeries,
-}, item BatchEntry, compressed CompressedEntry);
+    #[clog(min_version=V2)]
+    body: DataSeries,
+    #[clog(min_version=V3)]
+    headers: StringMap,
+}
 
-impl Builder {
+pub type BatchEntry<'a> = ShemaImplItem<'a>;
+pub type Builder = ShemaImplBuilder;
+
+pub fn decode<'a, T: DeserializeOwned>(mut input: Input<'a>) -> Result<(T, Input<'a>), Error> {
+    let (val, rest) = postcard::take_from_bytes(&input)?;
+    input.advance(input.len() - rest.len());
+    Ok((val, input))
+}
+pub fn encode<T: Serialize, W: Extend<u8>>(val: T, writer: W) -> Result<W, Error> {
+    let writer = postcard::to_extend(&val, writer)?;
+    Ok(writer)
+}
+
+pub trait Shema: Sized {
+    type Item<'a>;
+    type Fields: SliceTrait;
+    
+    fn add(&mut self, item: Self::Item<'_>);
+    fn get(&self, idx: usize) -> Option<Self::Item<'_>>;
+    
+    fn decompress(&self, c: <Self::Fields as SliceTrait>::Elem) -> Self::Item<'_>;
+    fn fields(&self) -> &Owned<Self::Fields>;
+
     #[cfg(feature="encode")]
-    pub fn write_to(&self, mut writer: BytesMut, opt: &Options) -> BytesMut {
+    fn write(&self, f: &FileCompressor, writer: BytesMut, opt: &Options, version: u32) -> Result<BytesMut, Error>;
+    fn read<'a>(f: &FileDecompressor, data: Input<'a>, len: usize, version: u32) -> Result<(Self, Input<'a>), Error>;
+    fn reserve(&mut self, additional: usize);
+
+    fn iter(&self) -> impl Iterator<Item=Self::Item<'_>> + ExactSizeIterator {
+        self.fields().iter().map(|i| self.decompress(i))
+    }
+    fn range(&self, range: Range<usize>) -> impl Iterator<Item=Self::Item<'_>> + ExactSizeIterator + DoubleEndedIterator + '_ {
+        self.fields().iter().skip(range.start).take(range.end - range.start).map(|i| self.decompress(i))
+    }
+
+    #[cfg(feature="encode")]
+    fn write_to(&self, mut writer: BytesMut, opt: &Options) -> BytesMut {
         let f = FileCompressor::default();
         writer.reserve(10 * self.len() + 100);
 
         let header = Header {
-            version: V2,
-            len: self.soa.len()
+            version: SHEMA_VERSION,
+            len: self.len() as u32,
         };
         let writer = postcard::to_extend(&header, writer).unwrap();
         let writer = WriteAdapter(writer);
         let WriteAdapter(writer) = f.write_header(writer).unwrap();
-        let writer = self.write(&f, writer, opt).unwrap();
+        let writer = self.write(&f, writer, opt, SHEMA_VERSION).unwrap();
         writer
     }
-    pub fn from_slice(data: &[u8]) -> Result<Self, Error> {
-        let (header, reader) = take_from_bytes::<Header>(data)?;
-
+    fn from_slice(data: &[u8]) -> Result<Self, Error> {
+        let input = Input::new(data);
+        let (header, reader) = decode::<Header>(input)?;
+        println!("header: {header:?}");
+        if header.version > SHEMA_VERSION {
+            bail!("found version {} but compiled with version {}", header.version, SHEMA_VERSION);
+        }
+        println!("after header reader at {}", reader.pos());
         let (f, reader) = FileDecompressor::new(reader)?;
-        let (builder, reader) = Builder::read(&f, reader, header.len, header.version)?;
+        println!("after decmpressor reader at {}", reader.pos());
+        let (builder, reader) = Self::read(&f, reader, header.len as usize, header.version)?;
         Ok(builder)
     }
     #[cfg(feature="encode")]
-    pub fn to_vec(&self, options: &Options) -> Vec<u8> {
+    fn to_vec(&self, options: &Options) -> Vec<u8> {
         let buf = BytesMut::new();
         let buf = self.write_to(buf, options);
         buf.to_vec()
     }
-    pub fn reserve(&mut self, additional: usize) {
-        self.soa.reserve(additional);
-    }
-    pub fn len(&self) -> usize {
-        self.soa.len()
+    fn len(&self) -> usize {
+        self.fields().len()
     }
 }
 
@@ -261,6 +142,7 @@ impl<'a> From<&'a RequestEntry> for BatchEntry<'a> {
             port: e.port,
             time: e.time,
             body: e.body.as_deref(),
+            headers: e.headers.split(),
         }
     }
 }

@@ -1,37 +1,85 @@
+#![feature(alloc_layout_extra)]
+
+use std::ops::Deref;
 use std::{fs::File, io, net::IpAddr, usize};
 use std::io::{BufReader, BufWriter, BufRead, Write};
 
 use better_io::BetterBufRead;
 use bytes::{BufMut, Bytes, BytesMut};
+use http::header::{REFERER, USER_AGENT};
+use http::HeaderName;
 use istring::SmallString;
+use itertools::intersperse;
 use pco::wrapped::{FileCompressor, FileDecompressor};
 use anyhow::{Error};
 use serde::{Deserialize, Serialize};
-use shema::BatchEntry;
+use shema::{BatchEntry, Shema};
+use slice::SliceTrait;
 use strum::FromRepr;
 
-mod util;
+pub mod util;
 pub mod shema;
-mod types;
+pub mod types;
 pub mod filter;
+mod slice;
 
-#[cfg(target_arch = "wasm32")]
-type BuildHasher = rapidhash::RapidBuildHasher;
+#[cfg(all(target_feature="aes", target_feature="sse2"))]
+pub type BuildHasher = gxhash::GxBuildHasher;
 
-#[cfg(not(target_arch = "wasm32"))]
-type BuildHasher = gxhash::GxBuildHasher;
+#[cfg(not(all(target_feature="aes", target_feature="sse2")))]
+pub type BuildHasher = rapidhash::RapidBuildHasher;
 
+#[cfg(feature="encode")]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct RequestEntry {
     pub status: u16,
     pub method: SmallString,
     pub uri: String,
+    #[serde(default)]
     pub user_agent: Option<String>,
+    #[serde(default)]
     pub referer: Option<String>,
     pub ip: IpAddr,
     pub port: u16,
+    #[serde(default)]
     pub time: u64,
+    #[serde(default)]
     pub body: Option<Bytes>,
+    #[serde(default)]
+    pub headers: Headers,
+}
+
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+pub struct Headers(pub String);
+
+pub fn headers_string<'a>(pairs: impl Iterator<Item=(&'a str, &'a str)>) -> String {
+    let mut out = String::new();
+    for (i, (k, v)) in pairs.enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(k);
+        out.push(':');
+        out.push_str(v);
+    }
+    out
+}
+
+const SKIP_HEADERS: &[HeaderName] = &[REFERER, USER_AGENT];
+impl<'a> From<&'a http::HeaderMap> for Headers {
+    fn from(map: &'a http::HeaderMap) -> Self {
+        let pairs = map.iter()
+            .filter(|(k, _)| !SKIP_HEADERS.contains(k))
+            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)));
+
+        Headers(headers_string(pairs))
+    }
+}
+impl Headers {
+    pub fn split(&self) -> Vec<(&str, &str)> {
+        self.0.split("\n").filter_map(|s| s.split_once(":")).collect()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -69,15 +117,69 @@ pub trait Pos {
     fn pos(&self) -> usize;
 }
 
+#[derive(Clone)]
+pub struct Input<'a> {
+    data: &'a [u8],
+    pos: usize
+}
+impl<'a> Input<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Input { data, pos: 0 }
+    }
+    #[inline(always)]
+    pub fn advance(&mut self, n: usize) {
+        self.data = &self.data[n..];
+        self.pos += n;
+    }
+    pub fn take_n(&mut self, n: usize) -> Result<&'a [u8], Error> {
+        let (out, rest) = self.data.split_at_checked(n).ok_or_else(|| anyhow::anyhow!("not enough input data"))?;
+        self.data = rest;
+        self.pos += n;
+        Ok(out)
+    }
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
+}
+impl<'a> Deref for Input<'a> {
+    type Target = [u8];
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+impl<'a> BetterBufRead for Input<'a> {
+    #[inline(always)]
+    fn buffer(&self) -> &[u8] {
+        self.data
+    }
+    #[inline(always)]
+    fn capacity(&self) -> Option<usize> {
+        None
+    }
+    #[inline(always)]
+    fn consume(&mut self, n_bytes: usize) {
+        self.advance(n_bytes);
+    }
+    #[inline(always)]
+    fn fill_or_eof(&mut self, n_bytes: usize) -> io::Result<()> {
+        Ok(())
+    }
+    #[inline(always)]
+    fn resize_capacity(&mut self, desired: usize) {
+    }
+}
+
 pub trait DataBuilder: Sized {
     type CompressedItem;
     type Item<'a>;
     type Slice<'a>;
     type SliceMut<'a>;
     type Size;
+    type Data: SliceTrait;
     
     fn add<'a>(&mut self, item: Self::Item<'a>) -> Self::CompressedItem;
-    fn read<'a, 'r>(f: &FileDecompressor, slice: Self::SliceMut<'a>, data: &'r [u8], size: Self::Size) -> Result<(Self, &'r [u8]), Error>;
+    fn read<'a, 'r>(f: &FileDecompressor, slice: Self::SliceMut<'a>, data: Input<'r>, size: Self::Size) -> Result<(Self, Input<'r>), Error>;
     fn get<'a>(&'a self, compressed: Self::CompressedItem) -> Option<Self::Item<'a>>;
 }
 
@@ -86,123 +188,9 @@ pub trait DataBuilderEncode: DataBuilder {
     fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, opt: &Options) -> Result<(Self::Size, W), Error>;
 }
 
-#[cfg(test)]
-fn read_log() -> impl Iterator<Item=RequestEntry> {
-    let file = File::open("../../artisan/user.log").unwrap();
-    let mut reader = BufReader::new(file);
-
-    let mut line = String::new();
-
-    std::iter::from_fn(move || {
-        let n = reader.read_line(&mut line).ok()?;
-        if n == 0 {
-            return None;
-        }
-        let out = serde_json::from_str::<RequestEntry>(&line);
-        line.clear();
-        Some(out)
-    }).flat_map(|r| r.ok())
-}
-
-#[test]
-fn test_log() {
-    use crate::shema::Builder;
-
-    let mut builder = Builder::default();
-    let entries: Vec<RequestEntry> = read_log().collect();
-    for entry in entries.iter() {
-        builder.add(entry.into());
-    }
-    println!("parsing complete");
-
-    for q in 1 .. 12 {
-        let opt = Options {
-            brotli_level: q, .. Default::default()
-        };
-        let data = builder.to_vec(&opt);
-        println!("q={q}, size={}", data.len());
-    }
-    
-    let data = builder.to_vec(&Options::default());
-    println!("compressed: {} bytes", data.len());
-    std::fs::write("user.data", &data).unwrap();
-
-    println!("{} bytes per row", data.len() as f64 / builder.len() as f64);
-    let b2 = Builder::from_slice(&data).unwrap();
-
-    /*
-    for item in b2.iter() {
-        println!("{item:?}");
-    }
-     */
-}
-
-#[test]
-fn test_log2() {
-    use crate::shema::Builder;
-
-    let mut builder = Builder::default();
-    let entries: Vec<RequestEntry> = read_log().collect();
-    for (i, entry) in entries.iter().enumerate() {
-        let mut e: BatchEntry = entry.into();
-        if i % 16 == 0 {
-            e.body = Some(b"hello world");
-        }
-        builder.add(e);
-    }
-    println!("parsing complete");
-
-    for q in 1 .. 12 {
-        let opt = Options {
-            brotli_level: q, .. Default::default()
-        };
-        let data = builder.to_vec(&opt);
-        println!("q={q}, size={}", data.len());
-    }
-    
-    let data = builder.to_vec(&Options::default());
-    println!("compressed: {} bytes", data.len());
-    std::fs::write("user.data", &data).unwrap();
-
-    println!("{} bytes per row", data.len() as f64 / builder.len() as f64);
-    let b2 = Builder::from_slice(&data).unwrap();
-
-    for item in b2.iter().step_by(16) {
-        println!("{:?}", item);
-    }
-}
 
 #[derive(Default)]
 pub struct Options {
     pub brotli_level: u8,
     pub dict: &'static [u8]
 }
-
-#[test]
-fn test_compression() {
-    use crate::shema::Builder;
-    use std::collections::HashSet;
-    use types::compress_string;
-    use util::IoWritePos;
-
-
-    fn test_dict(uris: &str, opt: &Options) -> usize {
-        let mut out = IoWritePos { writer: vec![], pos: 0 };
-        compress_string(&mut out, uris, &opt).unwrap();
-        out.writer.len()
-    }
-
-    let mut uris = HashSet::with_hasher(BuildHasher::default());
-    for entry in read_log() {
-        uris.insert(entry.uri);
-    }
-    let strings: String = uris.into_iter().collect();
-    
-    let dict = b"https://artisan-ma.net/img /api/img width? context shop 2000 1000 600 400 www";
-    println!("brotli  5: {}",        test_dict(&strings, &Options { brotli_level: 5, dict: b"" }));
-    println!("brotli  5 + dict: {}", test_dict(&strings, &Options { brotli_level: 5, dict }));
-    println!("brotli 11 + dict: {}", test_dict(&strings, &Options { brotli_level: 11, dict  }));
-
-}
-
-

@@ -1,10 +1,11 @@
 use std::{collections::{BTreeMap, HashMap, VecDeque}, net::Ipv6Addr, ops::Range, str::from_utf8_unchecked, sync::Arc};
 
+use itertools::intersperse;
 use js_sys::{BigInt, Function, JsString, Object, Uint8Array};
 use time::OffsetDateTime;
 use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
 use web_sys::{BinaryType, Event, MessageEvent, WebSocket};
-use clog_core::{filter::{Filter, FilterCtx}, shema, BatchHeader, PacketType, SyncHeader};
+use clog_core::{filter::{Filter, FilterCtx}, headers_string, shema, BatchHeader, PacketType, SyncHeader};
 use clog_ws_api::{ClientMessage, ServerMessage};
 
 use crate::shema::{BatchEntry, Builder};
@@ -390,7 +391,7 @@ impl FilterView {
 
 #[wasm_bindgen(module="/src/lib.js")]
 extern "C" {
-    pub unsafe fn make_entry(status: u16, method: &str, uri: &str, ua: Option<&str>, referer: Option<&str>, ip: &str, port: u16, time: &str, body: Option<&[u8]>) -> JsValue;
+    pub unsafe fn make_entry(status: u16, method: &str, uri: &str, ua: Option<&str>, referer: Option<&str>, ip: &str, port: u16, time: &str, body: Option<&[u8]>, headers: &str) -> JsValue;
 }
 
 struct ArrayStr<'a> {
@@ -431,6 +432,8 @@ fn wrap(e: BatchEntry<'_>) -> JsValue {
 
     let time = format_time(&mut time_buf, e.time);
     let ip = format_ip(&mut ip_buf, e.ip);
+    let headers: String = headers_string(e.headers.into_iter());
+    
     unsafe {
         make_entry(
             e.status,
@@ -441,7 +444,8 @@ fn wrap(e: BatchEntry<'_>) -> JsValue {
             ip.as_str(),
             e.port,
             time.as_str(),
-            e.body
+            e.body,
+            &headers
         )
     }
 }
