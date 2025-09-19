@@ -1,4 +1,4 @@
-export function make_entry(status, method, uri, ua, referer, ip, port, time, body, headers) {
+export function make_entry(status, method, uri, ua, referer, ip, port, time, body, headers, host) {
     return {
         status,
         method,
@@ -9,6 +9,7 @@ export function make_entry(status, method, uri, ua, referer, ip, port, time, bod
         port,
         time,
         body,
-        headers
+        headers,
+        host
     };
 }
