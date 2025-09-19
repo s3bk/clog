@@ -162,15 +162,25 @@ pub fn derive_shema_fn(input: TokenStream) -> TokenStream {
             #( #idents: #types ),*
         }
 
-        #[derive(Debug, Serialize)]
+        #[derive(Debug, Serialize, Deserialize)]
         #vis struct #item_ident<'a> {
-            #( pub #idents: <#types as DataBuilder>::Item<'a> ),*
+            #( 
+                #[serde(borrow)]
+                pub #idents: <#types as DataBuilder>::Item<'a>
+            ),*
         }
 
         impl Shema for #builder_ident {
             type Item<'a> = #item_ident<'a>;
             type Fields = #fields_ident;
             
+            fn with_capacity(n: usize) -> Self {
+                #builder_ident {
+                    soa: Owned::<#fields_ident>::with_capacity(n),
+                    #( #idents: <#types as Default>::default() ),*
+                }
+            }
+
             fn fields(&self) -> &Owned<Self::Fields> {
                 &self.soa
             }

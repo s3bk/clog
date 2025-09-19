@@ -1,5 +1,3 @@
-#![feature(alloc_layout_extra)]
-
 use std::ops::Deref;
 use std::{fs::File, io, net::IpAddr, usize};
 use std::io::{BufReader, BufWriter, BufRead, Write};
@@ -35,10 +33,6 @@ pub struct RequestEntry {
     pub status: u16,
     pub method: SmallString,
     pub uri: String,
-    #[serde(default)]
-    pub user_agent: Option<String>,
-    #[serde(default)]
-    pub referer: Option<String>,
     pub ip: IpAddr,
     pub port: u16,
     #[serde(default)]
@@ -47,6 +41,7 @@ pub struct RequestEntry {
     pub body: Option<Bytes>,
     #[serde(default)]
     pub headers: Headers,
+    pub host: String,
 }
 
 
@@ -66,11 +61,9 @@ pub fn headers_string<'a>(pairs: impl Iterator<Item=(&'a str, &'a str)>) -> Stri
     out
 }
 
-const SKIP_HEADERS: &[HeaderName] = &[REFERER, USER_AGENT];
 impl<'a> From<&'a http::HeaderMap> for Headers {
     fn from(map: &'a http::HeaderMap) -> Self {
         let pairs = map.iter()
-            .filter(|(k, _)| !SKIP_HEADERS.contains(k))
             .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)));
 
         Headers(headers_string(pairs))
@@ -170,7 +163,7 @@ impl<'a> BetterBufRead for Input<'a> {
     }
 }
 
-pub trait DataBuilder: Sized {
+pub trait DataBuilder: Default + Sized {
     type CompressedItem;
     type Item<'a>;
     type Slice<'a>;

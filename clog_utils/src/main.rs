@@ -5,7 +5,7 @@ use anyhow::Error;
 use bytes::Bytes;
 use clap::{arg, builder, command, Parser};
 use clog_collector::{decode_batch, encode_batch, init_log, LogOptions};
-use clog_core::{shema::{BatchEntry, Builder}, RequestEntry};
+use clog_core::{RequestEntry, shema::{BatchEntry, Builder, Shema}};
 use futures::future::join_all;
 use itertools::Itertools;
 use tokio::{fs::File, io::{AsyncBufReadExt, BufReader}, spawn, sync::mpsc::{channel, Receiver}, task::JoinHandle};

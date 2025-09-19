@@ -5,7 +5,7 @@ use js_sys::{BigInt, Function, JsString, Object, Uint8Array};
 use time::OffsetDateTime;
 use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
 use web_sys::{BinaryType, Event, MessageEvent, WebSocket};
-use clog_core::{filter::{Filter, FilterCtx}, headers_string, shema, BatchHeader, PacketType, SyncHeader};
+use clog_core::{BatchHeader, PacketType, SyncHeader, filter::{Filter, FilterCtx}, headers_string, shema::{self, Shema}};
 use clog_ws_api::{ClientMessage, ServerMessage};
 
 use crate::shema::{BatchEntry, Builder};

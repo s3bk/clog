@@ -37,7 +37,7 @@ impl<F: SliceTrait> Owned<F> {
             if layout.size() > 0 {
                 ptr = System.alloc(layout);
             } else {
-                ptr = layout.dangling().as_mut();
+                ptr = layout.align() as *mut u8;
             }
             //dbg!(ptr, layout.align());
             Owned { fields, len: 0, capacity: n, ptr }
@@ -92,10 +92,8 @@ impl<F: SliceTrait> Owned<F> {
 
         let mut new = Self::with_capacity(new_cap);
 
-        unsafe {
-            F::copy_slice_uninit(self.slice(), new.slice_uninit(self.len));
-            new.len = self.len;
-        }
+        F::copy_slice_uninit(self.slice(), new.slice_uninit(self.len));
+        new.len = self.len;
 
         *self = new;
     }
