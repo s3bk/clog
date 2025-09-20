@@ -391,7 +391,7 @@ impl FilterView {
 
 #[wasm_bindgen(module="/src/lib.js")]
 extern "C" {
-    pub unsafe fn make_entry(status: u16, method: &str, uri: &str, ua: Option<&str>, referer: Option<&str>, ip: &str, port: u16, time: &str, body: Option<&[u8]>, headers: &str, host: &str) -> JsValue;
+    pub unsafe fn make_entry(status: u16, method: &str, uri: &str, ua: Option<&str>, referer: Option<&str>, ip: &str, port: u16, time: &str, body: Option<&[u8]>, headers: &str, host: &str, proto: u16) -> JsValue;
 }
 
 struct ArrayStr<'a> {
@@ -446,7 +446,8 @@ fn wrap(e: BatchEntry<'_>) -> JsValue {
             time.as_str(),
             e.body,
             &headers,
-            e.host
+            e.host,
+            e.proto
         )
     }
 }

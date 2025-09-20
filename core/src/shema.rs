@@ -31,7 +31,8 @@ struct Header {
 
 const V2: u32 = 2;
 const V3: u32 = 3;
-const SHEMA_VERSION: u32 = V3;
+const V4: u32 = 3;
+const SHEMA_VERSION: u32 = V4;
 
 #[derive(clog_derive::Shema)]
 pub struct ShemaImpl {
@@ -51,6 +52,8 @@ pub struct ShemaImpl {
     headers: StringMap,
     #[clog(min_version=V3)]
     host: HashStrings,
+    #[clog(min_version=V4)]
+    proto: NumberSeries<u16>,
 }
 
 pub type BatchEntry<'a> = ShemaImplItem<'a>;
@@ -146,7 +149,8 @@ impl<'a> From<&'a RequestEntry> for BatchEntry<'a> {
             time: e.time,
             body: e.body.as_deref(),
             headers: e.headers.split(),
-            host: &e.host
+            host: &e.host,
+            proto: e.proto as u16
         }
     }
 }

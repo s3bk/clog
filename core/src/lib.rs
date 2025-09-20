@@ -42,6 +42,15 @@ pub struct RequestEntry {
     #[serde(default)]
     pub headers: Headers,
     pub host: String,
+    pub proto: Protocol
+}
+
+#[cfg(feature="encode")]
+#[derive(Copy, Clone, serde::Serialize, serde::Deserialize)]
+pub enum Protocol {
+    Unknown = 0,
+    Http = 1,
+    Https = 2,
 }
 
 
