@@ -42,7 +42,9 @@ pub struct RequestEntry {
     #[serde(default)]
     pub headers: Headers,
     pub host: String,
-    pub proto: Protocol
+    pub proto: Protocol,
+    #[serde(default)]
+    pub location: Option<SmallString>,
 }
 
 #[cfg(feature="encode")]
@@ -179,7 +181,7 @@ pub trait DataBuilder: Default + Sized {
     type SliceMut<'a>;
     type Size;
     type Data: SliceTrait;
-    
+
     fn add<'a>(&mut self, item: Self::Item<'a>) -> Self::CompressedItem;
     fn read<'a, 'r>(f: &FileDecompressor, slice: Self::SliceMut<'a>, data: Input<'r>, size: Self::Size) -> Result<(Self, Input<'r>), Error>;
     fn get<'a>(&'a self, compressed: Self::CompressedItem) -> Option<Self::Item<'a>>;

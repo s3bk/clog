@@ -13,7 +13,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::types::DataSeries;
 use crate::util::WriteAdapter;
-use crate::{types::{HashIpv6, HashStrings, HashStringsOpt, NumberSeries, TimeSeries, StringMap}, util::ReadAdapter, DataBuilder, Options, Pos, RequestEntry, 
+use crate::{types::{HashIpv6, HashStrings, HashStringsOpt, NumberSeries, TimeSeries, StringMap}, util::ReadAdapter, DataBuilder, Options, Pos, RequestEntry,
     slice::{SliceTrait, Owned},
     Input
 };
@@ -31,8 +31,9 @@ struct Header {
 
 const V2: u32 = 2;
 const V3: u32 = 3;
-const V4: u32 = 3;
-const SHEMA_VERSION: u32 = V4;
+const V4: u32 = 4;
+const V5: u32 = 5;
+const SHEMA_VERSION: u32 = V5;
 
 #[derive(clog_derive::Shema)]
 pub struct ShemaImpl {
@@ -54,6 +55,8 @@ pub struct ShemaImpl {
     host: HashStrings,
     #[clog(min_version=V4)]
     proto: NumberSeries<u16>,
+    #[clog(min_version=V5)]
+    location: HashStringsOpt,
 }
 
 pub type BatchEntry<'a> = ShemaImplItem<'a>;
@@ -72,12 +75,12 @@ pub fn encode<T: Serialize, W: Extend<u8>>(val: T, writer: W) -> Result<W, Error
 pub trait Shema: Sized {
     type Item<'a>;
     type Fields: SliceTrait;
-    
+
     fn with_capacity(n: usize) -> Self;
 
     fn add(&mut self, item: Self::Item<'_>);
     fn get(&self, idx: usize) -> Option<Self::Item<'_>>;
-    
+
     fn decompress(&self, c: <Self::Fields as SliceTrait>::Elem) -> Self::Item<'_>;
     fn fields(&self) -> &Owned<Self::Fields>;
 
@@ -150,7 +153,8 @@ impl<'a> From<&'a RequestEntry> for BatchEntry<'a> {
             body: e.body.as_deref(),
             headers: e.headers.split(),
             host: &e.host,
-            proto: e.proto as u16
+            proto: e.proto as u16,
+            location: e.location.as_deref(),
         }
     }
 }

@@ -10,19 +10,29 @@ extern {
     type Error = FilterParseError;
 }
 
-NumU8: u8 = <s:r"[0-9]+"> =>? u8::from_str(s).map_err(|e| ParseError::User { error: FilterParseError::ParseInt(e) });
-NumU16: u16 = <s:r"[0-9]+"> =>? u16::from_str(s).map_err(|e| ParseError::User { error: FilterParseError::ParseInt(e) });
-NumU32: u32 = <s:r"[0-9]+"> =>? u32::from_str(s).map_err(|e| ParseError::User { error: FilterParseError::ParseInt(e) });
+match {
+    r"\d+" => Num,
+} else {
+    r#"[\w\/\?\+\-\.\:=\&]+"# => String,
+    r#""(\\\\|\\"|[^"\\])*""# => Complex,
+    r#"r"(\\\\|\\"|[^"\\])*""# => Re,
+    _
+}
+NumU8: u8 = <s:Num> =>? u8::from_str(s).map_err(|e| ParseError::User { error: FilterParseError::ParseInt(e) });
+NumU16: u16 = <s:Num> =>? u16::from_str(s).map_err(|e| ParseError::User { error: FilterParseError::ParseInt(e) });
+NumU32: u32 = <s:Num> =>? u32::from_str(s).map_err(|e| ParseError::User { error: FilterParseError::ParseInt(e) });
 
-pub SimpleLit: &'input str = <l:r#"[a-zA-Z\/\?\+\-_\.\:=\&]+"#> => l;
-pub Str: String = <lo:@L> <l:r#""(\\\\|\\"|[^"\\])*""#> =>? apply_string_escapes(&l[1..l.len()-1], lo + 1);
+
+pub SimpleLit: &'input str = <l:String> => l;
+pub Str: String = <lo:@L> <l:Complex> =>? apply_string_escapes(&l[1..l.len()-1], lo + 1);
 
 pub Lit: String = {
     <s:SimpleLit> => s.into(),
+    <s:Num> => s.into(),
     <s:Str> => s,
 };
 
-pub Regex: Regex =  <l:r#"r"(\\\\|\\"|[^"\\])*""#> =>? Regex::new(&l[2..l.len()-1]).map_err(|e| ParseError::User { error: FilterParseError::Regex(e) });
+pub Regex: Regex =  <l:Re> =>? Regex::new(&l[2..l.len()-1]).map_err(|e| ParseError::User { error: FilterParseError::Regex(e) });
 
 pub StringFilter: StringFilter = {
     <s:Lit> => StringFilter::Equals(s),
@@ -33,12 +43,17 @@ pub StringFilter: StringFilter = {
 };
 
 NumberFilter: NumberFilter<u16> = {
-    <a:NumU16> => NumberFilter::Equals(a),
     <a:NumU16> ".." <b:NumU16> => NumberFilter::Range(a, b),
+    <a:NumU16> => NumberFilter::Equals(a),
     ">" <a:NumU16> => NumberFilter::Range(a+1, u16::MAX),
     ">=" <a:NumU16> => NumberFilter::Range(a, u16::MAX),
     "<" <a:NumU16> => NumberFilter::Range(0, a),
     "<=" <a:NumU16> => NumberFilter::Range(0, a+1),
+};
+
+ProtoFilter: ProtoFilter = {
+    "http" => ProtoFilter::Http,
+    "https" => ProtoFilter::Https,
 };
 
 IpBlock: IpBlock = {
@@ -51,7 +66,7 @@ IpFilter: IpFilter = {
 
 TimeUnit: u32 = {
     "s" => 1,
-    "min" => 60,
+    "m" => 60,
     "h" => 3600,
     "d" => 24 * 3600,
     "w" => 7 * 24 * 3600
@@ -79,7 +94,6 @@ TimeFilter: TimeFilter = {
     <a:TimeSpec> ".." => TimeFilter::after(a),
     ".." <b:TimeSpec> => TimeFilter::before(b),
 };
-
 Combination: Combinations = {
     "!" <f:Filter> => Combinations::Not(f.into()),
     <f:(<Filter> "&")+> <g:Filter> => Combinations::And(join(f,g)),
@@ -91,11 +105,12 @@ Field: FieldFilter = {
     "status" <f:NumberFilter> => FieldFilter::Status(f),
     "method" <f:StringFilter> => FieldFilter::Method(f),
     "uri" <f:StringFilter> => FieldFilter::Uri(f),
-    "ua" <f:StringFilter> => FieldFilter::UserAgent(f),
-    "referer" <f:StringFilter> => FieldFilter::Referer(f),
     "ip" <f:IpFilter> => FieldFilter::Ip(f),
-    "port" <f:NumberFilter> => FieldFilter::Port(f),
     "time" <f:TimeFilter> => FieldFilter::Time(f),
+    "port" <f:NumberFilter> => FieldFilter::Port(f),
+    "host" <f:StringFilter> => FieldFilter::Host(f),
+    "proto" <f:ProtoFilter> => FieldFilter::Proto(f),
+    <h:SimpleLit> <f:StringFilter> => FieldFilter::Header(HeaderFilter::new(&h, f)),
 };
 
 Filter: Filter = {

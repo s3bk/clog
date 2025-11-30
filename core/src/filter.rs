@@ -6,6 +6,7 @@ use lalrpop_util::{lalrpop_mod, ParseError};
 use regex::Regex;
 use serde::{Deserialize, Deserializer};
 use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
+use crate::Protocol;
 use crate::shema::BatchEntry;
 
 lalrpop_mod!(grammar);
@@ -141,16 +142,43 @@ pub enum TimeSpec {
     Absolute(u64),
 }
 
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq)]
+#[repr(u16)]
+pub enum ProtoFilter {
+    Http = Protocol::Http as u16,
+    Https = Protocol::Https as u16,
+}
+impl ProtoFilter {
+    pub fn matches(&self, proto: u16) -> bool {
+        proto == Protocol::Unknown as u16 || *self as u16 == proto
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct HeaderFilter {
+    header: String,
+    filter: StringFilter
+}
+impl HeaderFilter {
+    pub fn new(header: &str, filter: StringFilter) -> Self {
+        HeaderFilter { header: header.to_ascii_lowercase(), filter }
+    }
+    pub fn matches(&self, headers: &[(&str, &str)]) -> bool {
+        headers.iter().any(|&(key, val)| key == self.header && self.filter.matches(val))
+    }
+}
+
 #[derive(Debug, Deserialize, PartialEq)]
 pub enum FieldFilter {
     Status(NumberFilter<u16>),
     Method(StringFilter),
     Uri(StringFilter),
-    UserAgent(StringFilter),
-    Referer(StringFilter),
     Ip(IpFilter),
     Port(NumberFilter<u16>),
     Time(TimeFilter),
+    Host(StringFilter),
+    Proto(ProtoFilter),
+    Header(HeaderFilter),
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -176,10 +204,11 @@ impl Filter {
                 FieldFilter::Method(f) => f.matches(entry.method),
                 FieldFilter::Status(n) => n.matches(entry.status),
                 FieldFilter::Uri(s) => s.matches(entry.uri),
-                FieldFilter::UserAgent(s) => s.matches(entry.ua.unwrap_or_default()),
                 FieldFilter::Ip(i) => i.matches(entry.ip),
-                FieldFilter::Referer(f) => f.matches(entry.referer.unwrap_or_default()),
                 FieldFilter::Time(f) => f.matches(ctx, entry.time),
+                FieldFilter::Host(f) => f.matches(entry.host),
+                FieldFilter::Proto(f) => f.matches(entry.proto),
+                FieldFilter::Header(f) => f.matches(&entry.headers),
             }
             Filter::Combination(c) => match c {
                 Combinations::Not(f) => !f.matches(ctx, entry),
@@ -269,8 +298,8 @@ fn test_filter_parser() {
         Filter::Field(FieldFilter::Port(NumberFilter::Equals(100)))
     ]))));
     assert_eq!(Filter::parse("uri /api/ *"), Ok(Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))));
-    assert_eq!(Filter::parse(r#"port 80..100 & uri "/api/"*"#), Ok(Filter::Combination(Combinations::And(vec![
-        Filter::Field(FieldFilter::Port(NumberFilter::Range(80, 100))), Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))
+    assert_eq!(Filter::parse(r#"port 80 .. 100 & uri "/api/"*"#), Ok(Filter::Combination(Combinations::And(vec![
+        Filter::Field(FieldFilter::Port(NumberFilter::Range(80, 100))), Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))    
     ]))));
 }
 #[test]
