@@ -117,14 +117,14 @@ pub fn derive_slice_trait_fn(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Shema, attributes(clog))]
 pub fn derive_shema_fn(input: TokenStream) -> TokenStream {
     let original_struct = parse_macro_input!(input as DeriveInput);
-   
+
     let ShemaStruct { ident, data } = ShemaStruct::from_derive_input(&original_struct).unwrap();
 
     let vis = original_struct.vis;
     let fields = data.take_struct().unwrap().fields;
     let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
     let types: Vec<_> = fields.iter().map(|f| &f.ty).collect();
-    
+
     let builder_ident = format_ident!("{}{}", ident, "Builder");
 
     let data_ident = format_ident!("{}{}", ident, "Data");
@@ -134,7 +134,7 @@ pub fn derive_shema_fn(input: TokenStream) -> TokenStream {
     let data_slice_mut_ident = format_ident!("{}{}", data_ident, "SliceMut");
 
     let item_ident = format_ident!("{}{}", ident, "Item");
-    
+
     let version_check: Vec<_> = fields.iter().map(|f| {
         let mut conds = vec![];
         if let Some(ref min) = f.min_version {
@@ -164,7 +164,7 @@ pub fn derive_shema_fn(input: TokenStream) -> TokenStream {
 
         #[derive(Debug, Serialize, Deserialize)]
         #vis struct #item_ident<'a> {
-            #( 
+            #(
                 #[serde(borrow)]
                 pub #idents: <#types as DataBuilder>::Item<'a>
             ),*
@@ -173,7 +173,7 @@ pub fn derive_shema_fn(input: TokenStream) -> TokenStream {
         impl Shema for #builder_ident {
             type Item<'a> = #item_ident<'a>;
             type Fields = #fields_ident;
-            
+
             fn with_capacity(n: usize) -> Self {
                 #builder_ident {
                     soa: Owned::<#fields_ident>::with_capacity(n),
@@ -208,18 +208,18 @@ pub fn derive_shema_fn(input: TokenStream) -> TokenStream {
                 let mut scratch = Vec::with_capacity(8 * self.soa.len() + 100);
                 let #data_slice_ident { #( #idents ),* } = self.soa.slice();
                 #(
-                    println!("FIELD {}", stringify!(#idents));
+                    //println!("FIELD {}", stringify!(#idents));
                     if #version_check {
                         let (field_size, scratch2) = self.#idents.write(f, #idents, scratch, opt)?;
                         scratch = scratch2;
-                        
-                        println!("    header at {}", writer.len());
+
+                        //println!("    header at {}", writer.len());
                         writer = clog::shema::encode(field_size, writer)?;
-                        println!("    data at {}", writer.len());
+                        //println!("    data at {}", writer.len());
                         writer.extend_from_slice(&scratch);
                         scratch.clear();
                     } else {
-                        println!("    skipped");
+                        //println!("    skipped");
                     }
                 )*
                 Ok(writer)
@@ -234,19 +234,19 @@ pub fn derive_shema_fn(input: TokenStream) -> TokenStream {
                     #( #idents ),*
                 } = soa.slice_mut();
                 #(
-                    println!("FIELD {}", stringify!(#idents));
+                    //println!("FIELD {}", stringify!(#idents));
                     let (#idents, data) = if #version_check {
-                        println!("    header at {}", data.pos());
+                        //println!("    header at {}", data.pos());
                         let (field_size, data) = clog::shema::decode(data)?;
-                        
-                        println!("    data at {}", data.pos());
+
+                        //println!("    data at {}", data.pos());
                         <#types as DataBuilder>::read(f, #idents, data, field_size)?
                     } else {
-                        println!("    skipped");
+                        //println!("    skipped");
                         (Default::default(), data)
                     };
                 )*
-                
+
                 Ok((#builder_ident {
                     soa,
                     #( #idents ),*
