@@ -191,7 +191,7 @@ pub enum Combinations {
 use crate::filter::grammar::Token;
 
 #[derive(Debug, Deserialize, PartialEq)]
-#[serde(untagged)] 
+#[serde(untagged)]
 pub enum Filter {
     Field(FieldFilter),
     Combination(Combinations)
@@ -299,8 +299,9 @@ fn test_filter_parser() {
     ]))));
     assert_eq!(Filter::parse("uri /api/ *"), Ok(Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))));
     assert_eq!(Filter::parse(r#"port 80 .. 100 & uri "/api/"*"#), Ok(Filter::Combination(Combinations::And(vec![
-        Filter::Field(FieldFilter::Port(NumberFilter::Range(80, 100))), Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))    
+        Filter::Field(FieldFilter::Port(NumberFilter::Range(80, 100))), Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))
     ]))));
+    assert_eq!(Filter::parse("ip 1.2.3.4"), Ok(Filter::Field(FieldFilter::Ip(IpFilter { bits: 1234, mask: (1<<32)-1 }))));
 }
 #[test]
 fn test_lit_parser() {
