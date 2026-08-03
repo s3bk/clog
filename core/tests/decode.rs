@@ -19,7 +19,7 @@ fn old() {
 
 #[test]
 fn new() {
-    let data = std::fs::read("../logs/block-10001.clog").unwrap();
+    let data = std::fs::read("../logs/block-970000.clog").unwrap();
     ShemaImplBuilder::from_slice(&data).unwrap();
 }
 
@@ -64,7 +64,7 @@ fn test_log() {
         let data = builder.to_vec(&opt);
         println!("q={q}, size={}", data.len());
     }
-    
+
     let data = builder.to_vec(&Options::default());
     println!("compressed: {} bytes", data.len());
     std::fs::write("user.data", &data).unwrap();
@@ -92,7 +92,7 @@ fn test_compression() {
         uris.insert(entry.uri);
     }
     let strings: String = uris.into_iter().collect();
-    
+
     let dict = b"https://artisan-ma.net/img /api/img width? context shop 2000 1000 600 400 www";
     println!("brotli  5: {}",        test_dict(&strings, &Options { brotli_level: 5, dict: b"" }));
     println!("brotli  5 + dict: {}", test_dict(&strings, &Options { brotli_level: 5, dict }));

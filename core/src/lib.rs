@@ -154,10 +154,6 @@ impl<'a> Deref for Input<'a> {
 }
 impl<'a> BetterBufRead for Input<'a> {
     #[inline(always)]
-    fn buffer(&self) -> &[u8] {
-        self.data
-    }
-    #[inline(always)]
     fn capacity(&self) -> Option<usize> {
         None
     }
@@ -166,8 +162,8 @@ impl<'a> BetterBufRead for Input<'a> {
         self.advance(n_bytes);
     }
     #[inline(always)]
-    fn fill_or_eof(&mut self, n_bytes: usize) -> io::Result<()> {
-        Ok(())
+    fn fill_or_eof(&mut self, n_bytes: usize) -> io::Result<&[u8]> {
+       Ok(self.data)
     }
     #[inline(always)]
     fn resize_capacity(&mut self, desired: usize) {

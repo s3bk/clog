@@ -341,7 +341,7 @@ impl PastManager {
         while let Some(cmd) = self.past_rx.recv().await {
             match cmd {
                 PastCommand::AddBuffer { start, data } => {
-                    println!("add buffer at {}", start);
+                    //println!("add buffer at {}", start);
                     if let Some(ref root) = self.dir {
                         let path = root.join(format!("block-{start}.clog"));
                         let temp_path = path.with_extension("new");
@@ -352,7 +352,7 @@ impl PastManager {
                     self.past_buffers.insert(start, Some(data));
                 }
                 PastCommand::Get { start, end, tx } => {
-                    println!("GET {start}..{end}");
+                    //println!("GET {start}..{end}");
 
                     for (&pos, data) in self.past_buffers.range_mut(..end).rev() {
                         if data.is_none() {
@@ -367,7 +367,7 @@ impl PastManager {
                         };
                         if let Some(data) = data {
                             let _ = tx.send(data.clone()).await;
-                            println!("  send {} bytes", data.len());
+                            //println!("  send {} bytes", data.len());
                         }
                         if pos < start {
                             break;
@@ -413,11 +413,17 @@ impl PastManager {
                     .and_then(|s| s.strip_prefix("block-"))
                     .and_then(|s| s.parse::<u64>().ok())
                 {
-                    println!("  block {n}");
+                    //println!("  block {n}");
                     self.past_buffers.insert(n, None);
                 }
             }
         }
         Ok(())
     }
+}
+
+#[test]
+fn test_batch() {
+    let data = std::fs::read("../logs/block-1540000.clog").unwrap();
+    decode_batch(&data).unwrap();
 }

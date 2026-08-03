@@ -18,7 +18,7 @@ function init_ws(update: (c: Client, start: bigint, end: bigint) => void): Clien
     //let ws = new WebSocket("ws://127.0.0.1:8080/api/ws");
     let ws = new WebSocket("ws://127.0.0.1:3000/ws");
     let client = new Client(ws);
-    
+
     function handle_range(range: PacketRange) {
         update(client, range.start, range.end);
         range.free();
@@ -55,9 +55,7 @@ function App() {
     let client: Client | null = null;
     let follow = true;
 
-    onMount(() => wasm({
-        
-    }).then(() => {
+    onMount(() => wasm({}).then(() => {
         function update(c: Client, start: bigint, end: bigint) {
             console.log(`recieved ${start}..${end}`);
             if (follow) {
@@ -81,7 +79,7 @@ function App() {
         client = init_ws(update);
         view = new ScrollView(produce, 20);
         filter_view = new FilterView(produce, 20);
-        
+
         createEffect(() => {
             try {
                 filter_view.set_filter(filterStr());
@@ -102,7 +100,7 @@ function App() {
             acc = 0.0;
             lastTarget = view;
         }
-        let delta;
+        let delta: number = 0.0;
         switch (event.deltaMode) {
             case event.DOM_DELTA_PIXEL:
                 delta = event.deltaY / 20;
@@ -131,7 +129,7 @@ function App() {
         event.preventDefault();
     };
     return <div>
-        <Table on:wheel={(e) => handleScroll(e, view, updateList)} list={list} />
+        <Table on:wheel={(e: MouseEvent) => handleScroll(e, view, updateList)} list={list} />
 
         <input type="text" value={filterStr()} oninput={(e) => setFilterStr(e.target.value)} />
         <div>{filterStrError()}</div>

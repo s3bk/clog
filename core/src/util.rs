@@ -20,7 +20,7 @@ impl<W: io::Write> io::Write for IoWritePos<W> {
     fn flush(&mut self) -> io::Result<()> {
         self.writer.flush()
     }
-    fn write_all(&mut self, mut buf: &[u8]) -> io::Result<()> {
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
         self.writer.write_all(buf)?;
         self.pos += buf.len();
         Ok(())
@@ -43,7 +43,7 @@ impl std::io::Write for WriteAdapter {
         self.0.extend_from_slice(buf);
         Ok(buf.len())
     }
-    fn write_all(&mut self, mut buf: &[u8]) -> io::Result<()> {
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
         self.0.extend_from_slice(buf);
         Ok(())
     }
@@ -57,9 +57,6 @@ pub struct ReadAdapter<'a> {
     pos: usize,
 }
 impl<'a> BetterBufRead for ReadAdapter<'a> {
-    fn buffer(&self) -> &[u8] {
-        self.slice
-    }
     fn capacity(&self) -> Option<usize> {
         None
     }
@@ -67,11 +64,11 @@ impl<'a> BetterBufRead for ReadAdapter<'a> {
         self.slice = &self.slice[n_bytes..];
         self.pos += n_bytes;
     }
-    fn fill_or_eof(&mut self, n_bytes: usize) -> io::Result<()> {
-        Ok(())
+    fn fill_or_eof(&mut self, n_bytes: usize) -> io::Result<&[u8]> {
+        Ok(self.slice)
     }
     fn resize_capacity(&mut self, desired: usize) {
-        
+
     }
 }
 impl<'a> ReadAdapter<'a> {
@@ -93,8 +90,8 @@ pub struct BrotliReadAdapter<R> {
 impl<R: BetterBufRead> CustomRead<io::Error> for BrotliReadAdapter<R> {
     fn read(self: &mut Self, data: &mut [u8]) -> Result<usize, io::Error> {
         let mut n = data.len().min(self.remaining);
-        if n <= self.inner.buffer().len() {
-            data[..n].copy_from_slice(&self.inner.buffer()[.. n]);
+        if let Ok(buffer) = self.inner.fill_or_eof(n) {
+            data[..n].copy_from_slice(&buffer[.. n]);
             self.inner.consume(n);
             self.remaining -= n;
             //println!("read {n} bytes");
@@ -103,8 +100,7 @@ impl<R: BetterBufRead> CustomRead<io::Error> for BrotliReadAdapter<R> {
         if let Some(max) = self.inner.capacity() {
             n = n.min(max);
         }
-        self.inner.fill_or_eof(n)?;
-        let buf = self.inner.buffer();
+        let buf = self.inner.fill_or_eof(n)?;
         n = buf.len().min(data.len()).min(self.remaining);
         data[.. n].copy_from_slice(&buf[.. n]);
         self.inner.consume(n);

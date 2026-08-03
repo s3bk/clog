@@ -166,7 +166,7 @@ impl Inputs {
         i.find_next();
         Ok(i)
     }
-    
+
     pub fn read(&self) -> Option<BatchEntry> {
         let i = self.inputs.get(self.next_idx)?;
         i.builder.get(i.pos)
@@ -200,8 +200,8 @@ impl Inputs {
                     }
                 }
             }
-            println!("input {} exhausted", self.next_idx);
-            println!("next t={}", self.inputs.iter().map(|i| i.t).format(", "));
+            //println!("input {} exhausted", self.next_idx);
+            //println!("next t={}", self.inputs.iter().map(|i| i.t).format(", "));
             self.inputs.remove(self.next_idx);
             self.find_next();
         }

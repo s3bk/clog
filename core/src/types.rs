@@ -54,7 +54,7 @@ fn read_string_set_inner<'a, 'r>(f: &FileDecompressor, reader: Input<'r>, size: 
 #[cfg(feature="encode")]
 fn write_string_set<'a, W: io::Write + Pos>(set: &StringInterner<StringBackend, BuildHasher>, f: &FileCompressor, slice: &'a [u32], writer: W, opt: &Options) -> Result<(u32, W), Error> {
     let (len, writer) = write_string_set_inner(set, f, writer, opt)?;
-    let writer = compress_slice(f, writer, slice, DeltaSpec::None)?;
+    let writer = compress_slice(f, writer, slice, DeltaSpec::NoOp)?;
     Ok((len as u32, writer))
 }
 fn read_string_set<'a, 'r>(f: &FileDecompressor, slice: &'a mut [u32], reader: Input<'r>, size: u32) -> Result<(StringInterner<StringBackend, BuildHasher>, Input<'r>), Error> {
@@ -69,7 +69,7 @@ impl DataBuilder for HashStrings {
     type SliceMut<'a> = &'a mut [u32];
     type Size = u32;
     type Data = Tuple1<u32>;
-    
+
     fn add<'a>(&mut self, item: Self::Item<'a>) -> Self::CompressedItem {
         let sym = self.set.get_or_intern(item);
         sym.to_usize() as u32
@@ -121,7 +121,7 @@ impl DataBuilder for StringMap {
     type SliceMut<'a> = &'a mut [u32];
     type Size = (u32, u32, u32);
     type Data = Tuple1<u32>;
-    
+
     fn add<'a>(&mut self, item: Self::Item<'a>) -> Self::CompressedItem {
         let mut entry = vec![];
         for (key, val) in item {
@@ -183,21 +183,21 @@ impl DataBuilderEncode for StringMap {
     fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, slice: Self::Slice<'a>, writer: W, opt: &Options) -> Result<(Self::Size, W), Error> {
         // set of key strings
         let (keys_size, writer) = write_string_set_inner(&self.keys, f, writer, opt)?;
-        
+
         // set of value strings
         let (vals_size, writer) = write_string_set_inner(&self.values, f, writer, opt)?;
-        
+
         // length of entry vecs
         let entries_len: Vec<u16> = self.entries.iter().map(|v| v.len() as u16).collect();
-        let writer = compress_slice(f, writer, &entries_len, DeltaSpec::None)?;
+        let writer = compress_slice(f, writer, &entries_len, DeltaSpec::NoOp)?;
 
         let (keys_idx, vals_idx): (Vec<u32>, Vec<u32>) = self.entries.iter().flat_map(|v| v.iter().cloned()).unzip();
         // concatenated entry key indices
         let writer = compress_slice(f, writer, &keys_idx, DeltaSpec::Auto)?;
-        
+
         // concatenated entry value indices
         let writer = compress_slice(f, writer, &vals_idx, DeltaSpec::Auto)?;
-        
+
         let writer = compress_slice(f, writer, slice, DeltaSpec::Auto)?;
 
         let n_entries = self.entries.len() as u32;
@@ -215,7 +215,7 @@ fn test_stringmap() {
     let f = FileCompressor::default();
     let writer = f.write_header(writer).unwrap();
 
-    println!("offset {}", writer.pos());
+    //println!("offset {}", writer.pos());
     let mut map = StringMap::default();
     let entry = vec![("Foo", "bar"), ("baz", "0123 412")];
     let n = map.add(entry.clone());
@@ -304,7 +304,7 @@ impl DataBuilder for HashStringsOpt {
     type SliceMut<'a> = &'a mut [u32];
     type Size = u32;
     type Data = Tuple1<u32>;
-    
+
     fn add<'a>(&mut self, item: Self::Item<'a>) -> Self::CompressedItem {
         match item {
             None => 0,
@@ -336,9 +336,8 @@ impl DataBuilderEncode for HashStringsOpt {
 fn copy_to(reader: &mut impl BetterBufRead, mut out: &mut [u8]) -> Result<(), Error> {
     while out.len() > 0 {
         let max = out.len().min(reader.capacity().unwrap_or(usize::MAX));
-        reader.fill_or_eof(max)?;
+        let buf = reader.fill_or_eof(max)?;
 
-        let buf = reader.buffer();
         let n = buf.len().min(out.len());
         let (head, tail) = out.split_at_mut(n);
         head.copy_from_slice(&buf[..n]);
@@ -397,7 +396,7 @@ impl DataBuilderEncode for HashIpv6 {
     fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, (prefixes, suffixes): Self::Slice<'a>, writer: W, _opt: &Options) -> Result<(Self::Size, W), Error> {
         let writer = compress_slice(f, writer, prefixes, DeltaSpec::TryLookback)?;
         let mut writer = compress_slice(f, writer, suffixes, DeltaSpec::TryLookback)?;
-        
+
         for i in self.prefixes.iter() {
             writer.write_all(bytemuck::bytes_of(i))?;
         }
@@ -532,9 +531,9 @@ fn compress_slice<'a, T: Number, W: io::Write + Pos>(f: &FileCompressor, writer:
         .with_delta_spec(delta_spec)
         .with_mode_spec(pco::ModeSpec::Classic)
         .with_paging_spec(pco::PagingSpec::EqualPagesUpTo(slice.len()));
-    
-    let time = f.chunk_compressor(slice, &config)?;
-    let writer = time.write_chunk_meta(writer)?;
+
+    let mut time = f.chunk_compressor(slice, &config)?;
+    let writer = time.write_meta(writer)?;
     let writer = time.write_page(0, writer)?;
     Ok(writer)
 }
@@ -545,12 +544,11 @@ fn decompress_slice<'a, 'r, T: Number>(f: &FileDecompressor, reader: Input<'r>, 
         return Ok(reader);
     }
 
-    let reader_clone = reader.clone();
-    let (decompressor, reader) = f.chunk_decompressor(reader).context("chunk header")?;
+    let (mut decompressor, reader) = f.chunk_decompressor(reader).context("chunk header")?;
     let mut page = decompressor.page_decompressor(reader, slice.len()).context("page")?;
-    let progress = page.decompress(slice).context("decompress")?;
+    let progress = page.read(slice).context("decompress")?;
     assert!(progress.finished);
     assert_eq!(progress.n_processed, slice.len());
-    
+
     Ok(page.into_src())
 }

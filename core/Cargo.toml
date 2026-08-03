@@ -14,7 +14,7 @@ encode = ["dep:brotli", "dep:http"]
 chute = "*"
 indexmap = "*"
 soa-rs = "*"
-pco = "*"
+pco = "1.0.3"
 brotli = { version = "*", default-features = false, features = ["std"], optional = true }
 brotli-decompressor = { version = "*" }
 bytemuck = "*"
