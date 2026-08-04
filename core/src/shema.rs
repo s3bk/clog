@@ -11,7 +11,7 @@ use anyhow::{bail, Error};
 use better_io::BetterBufRead;
 use serde::{Serialize, Deserialize};
 
-use crate::types::DataSeries;
+use crate::types::{DataSeries, HashArray};
 use crate::util::WriteAdapter;
 use crate::{types::{HashIpv6, HashStrings, HashStringsOpt, NumberSeries, TimeSeries, StringMap}, util::ReadAdapter, DataBuilder, Options, Pos, RequestEntry,
     slice::{SliceTrait, Owned},
@@ -33,6 +33,7 @@ const V2: u32 = 2;
 const V3: u32 = 3;
 const V4: u32 = 4;
 const V5: u32 = 5;
+const V6: u32 = 6;
 const SHEMA_VERSION: u32 = V5;
 
 #[derive(clog_derive::Shema)]
@@ -57,6 +58,8 @@ pub struct ShemaImpl {
     proto: NumberSeries<u16>,
     #[clog(min_version=V5)]
     location: HashStringsOpt,
+    #[clog(min_version=V6)]
+    tls_fp: HashArray<16>,
 }
 
 pub type BatchEntry<'a> = ShemaImplItem<'a>;

@@ -404,6 +404,51 @@ impl DataBuilderEncode for HashIpv6 {
     }
 }
 
+#[derive(Default, Clone)]
+pub struct HashArray<const N: usize> {
+    values: IndexSet<[u8; N], BuildHasher>,
+}
+impl<const N: usize> DataBuilder for HashArray<N> {
+    type Item<'a> = [u8; N];
+    type CompressedItem = u32;
+    type Slice<'a> = &'a [u32];
+    type SliceMut<'a> = &'a mut [u32];
+    type Size = u32;
+    type Data = Tuple1<u32>;
+
+    fn add<'a>(&mut self, item: Self::Item<'a>) -> Self::CompressedItem {
+        let (idx, _) = self.values.insert_full(item);
+        idx as u32
+    }
+    fn read<'a, 'r>(f: &FileDecompressor, idxs: Self::SliceMut<'a>, reader: Input<'r>, size: Self::Size) -> Result<(Self, Input<'r>), Error> {
+        let mut reader = decompress_slice(f, reader, idxs)?;
+
+        let mut values = IndexSet::with_capacity_and_hasher(size as usize, BuildHasher::default());
+        for _ in 0 .. size {
+            let mut val = [0; N];
+            copy_to(&mut reader, &mut val)?;
+            values.insert(val);
+        }
+
+        Ok((HashArray { values }, reader))
+    }
+    fn get<'a>(&'a self, idx: Self::CompressedItem) -> Option<Self::Item<'a>> {
+        let &value = self.values.get_index(idx as usize)?;
+        Some(value)
+    }
+}
+#[cfg(feature="encode")]
+impl<const N: usize> DataBuilderEncode for HashArray<N> {
+    fn write<'a, W: io::Write + Pos>(&self, f: &FileCompressor, idxs: Self::Slice<'a>, writer: W, _opt: &Options) -> Result<(Self::Size, W), Error> {
+        let mut writer = compress_slice(f, writer, idxs, DeltaSpec::TryLookback)?;
+
+        for i in self.values.iter() {
+            writer.write_all(&*i)?;
+        }
+        Ok((self.values.len() as u32, writer))
+    }
+}
+
 #[derive(Clone)]
 pub struct NumberSeries<N> {
     _m: PhantomData<N>

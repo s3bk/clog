@@ -41,10 +41,11 @@ pub struct RequestEntry {
     pub body: Option<Bytes>,
     #[serde(default)]
     pub headers: Headers,
-    pub host: String,
+    pub host: SmallString,
     pub proto: Protocol,
     #[serde(default)]
     pub location: Option<SmallString>,
+    pub tls_fingerprint: Option<u128>,
 }
 
 #[cfg(feature="encode")]
