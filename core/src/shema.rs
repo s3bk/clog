@@ -158,6 +158,7 @@ impl<'a> From<&'a RequestEntry> for BatchEntry<'a> {
             host: &e.host,
             proto: e.proto as u16,
             location: e.location.as_deref(),
+            tls_fp: e.tls_fingerprint.unwrap_or(0).to_le_bytes(),
         }
     }
 }
