@@ -4,22 +4,9 @@ use std::alloc::System;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
-use std::ptr;
 use std::slice;
 
-use clog_derive::SliceTrait;
 
-use crate::types::*;
-use crate::DataBuilder;
-
-
-#[derive(SliceTrait, Debug)]
-pub struct Combined {
-    status: Tuple1<u16>,
-    method: Tuple1<u32>,
-    uri: Tuple1<u32>,
-    ip: Tuple2<u32, u32>,
-}
 pub struct Owned<F: SliceTrait> {
     fields: F,
     len: usize,
@@ -80,9 +67,6 @@ impl<F: SliceTrait> Owned<F> {
             self.fields.slice_uninit(self.ptr, len)
         }
     }
-    unsafe fn set_len(&mut self, n: usize) {
-        self.len = n;
-    }
     pub fn reserve(&mut self, additional: usize) {
         let new_cap = self.capacity.checked_add(additional).expect("overflow");
         assert!(new_cap < isize::MAX as usize);
@@ -108,7 +92,7 @@ impl<F: SliceTrait> Owned<F> {
 }
 impl<F: SliceTrait> Drop for Owned<F> {
     fn drop(&mut self) {
-        let (layout, fields) = F::layout(self.capacity);
+        let (layout, _fields) = F::layout(self.capacity);
         if layout.size() > 0 {
             unsafe {
                 System.dealloc(self.ptr, layout);
@@ -173,7 +157,7 @@ impl<T: Copy + Debug> SliceTrait for Tuple1<T>
     type SliceMut<'a> = &'a mut [T];
     type SliceUninit<'a> = &'a mut [MaybeUninit<T>];
     type Elem = T;
-    
+
     #[inline(always)]
     fn layout(capacity: usize) -> (Layout, Self) {
         let layout = Layout::array::<T>(capacity).unwrap();
@@ -202,13 +186,13 @@ impl<T: Copy + Debug> SliceTrait for Tuple1<T>
     unsafe fn get(&self, raw: *mut u8, idx: usize) -> Self::Elem {
         unsafe {
             raw.cast::<T>().offset(idx as isize).read()
-        }    
+        }
     }
 
     unsafe fn write(&self, raw: *mut u8, idx: usize, elem: Self::Elem) {
         unsafe {
             raw.cast::<T>().offset(idx as isize).write(elem)
-        }    
+        }
     }
 
     fn copy_slice<'a, 'b>(from: Self::Slice<'a>, to: Self::SliceMut<'b>) {
@@ -233,7 +217,7 @@ impl<T: Debug, U: Debug> SliceTrait for Tuple2<T, U>
     type SliceMut<'a> = (&'a mut [T], &'a mut [U]);
     type SliceUninit<'a> = (&'a mut [MaybeUninit<T>], &'a mut [MaybeUninit<U>]);
     type Elem = (T, U);
-    
+
     #[inline(always)]
     fn layout(capacity: usize) -> (Layout, Self) {
         let layout1 = Layout::array::<T>(capacity).unwrap();
@@ -280,7 +264,7 @@ impl<T: Debug, U: Debug> SliceTrait for Tuple2<T, U>
                 raw.cast::<T>().offset(idx as isize).read(),
                 raw.offset(self.offset_1 as isize).cast::<U>().offset(idx as isize).read(),
             )
-        }    
+        }
     }
 
     unsafe fn write(&self, raw: *mut u8, idx: usize, elem: Self::Elem) {
@@ -288,7 +272,7 @@ impl<T: Debug, U: Debug> SliceTrait for Tuple2<T, U>
         unsafe {
             raw.cast::<T>().offset(idx as isize).write(t);
             raw.offset(self.offset_1 as isize).cast::<U>().offset(idx as isize).write(u);
-        }    
+        }
     }
 
     fn copy_slice<'a, 'b>(from: Self::Slice<'a>, to: Self::SliceMut<'b>) {

@@ -1,17 +1,12 @@
 use std::ops::Deref;
-use std::{fs::File, io, net::IpAddr, usize};
-use std::io::{BufReader, BufWriter, BufRead, Write};
+use std::{io, net::IpAddr, usize};
 
 use better_io::BetterBufRead;
 use bytes::{BufMut, Bytes, BytesMut};
-use http::header::{REFERER, USER_AGENT};
-use http::HeaderName;
 use istring::SmallString;
-use itertools::intersperse;
 use pco::wrapped::{FileCompressor, FileDecompressor};
 use anyhow::{Error};
 use serde::{Deserialize, Serialize};
-use shema::{BatchEntry, Shema};
 use slice::SliceTrait;
 use strum::FromRepr;
 
@@ -25,7 +20,15 @@ mod slice;
 pub type BuildHasher = gxhash::GxBuildHasher;
 
 #[cfg(not(all(target_feature="aes", target_feature="sse2")))]
-pub type BuildHasher = rapidhash::RapidBuildHasher;
+#[derive(Default, Copy, Clone)]
+pub struct BuildHasher;
+#[cfg(not(all(target_feature="aes", target_feature="sse2")))]
+impl std::hash::BuildHasher for BuildHasher {
+    type Hasher = rapidhash::fast::RapidHasher<'static>;
+    fn build_hasher(&self) -> Self::Hasher {
+        rapidhash::fast::RapidHasher::default_const()
+    }
+}
 
 #[cfg(feature="encode")]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -163,11 +166,11 @@ impl<'a> BetterBufRead for Input<'a> {
         self.advance(n_bytes);
     }
     #[inline(always)]
-    fn fill_or_eof(&mut self, n_bytes: usize) -> io::Result<&[u8]> {
+    fn fill_or_eof(&mut self, _n_bytes: usize) -> io::Result<&[u8]> {
        Ok(self.data)
     }
     #[inline(always)]
-    fn resize_capacity(&mut self, desired: usize) {
+    fn resize_capacity(&mut self, _desired: usize) {
     }
 }
 

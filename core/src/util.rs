@@ -64,10 +64,10 @@ impl<'a> BetterBufRead for ReadAdapter<'a> {
         self.slice = &self.slice[n_bytes..];
         self.pos += n_bytes;
     }
-    fn fill_or_eof(&mut self, n_bytes: usize) -> io::Result<&[u8]> {
+    fn fill_or_eof(&mut self, _n_bytes: usize) -> io::Result<&[u8]> {
         Ok(self.slice)
     }
-    fn resize_capacity(&mut self, desired: usize) {
+    fn resize_capacity(&mut self, _desired: usize) {
 
     }
 }

@@ -13,7 +13,6 @@ encode = ["dep:brotli", "dep:http"]
 [dependencies]
 chute = "*"
 indexmap = "*"
-soa-rs = "*"
 pco = "1.0.3"
 brotli = { version = "*", default-features = false, features = ["std"], optional = true }
 brotli-decompressor = { version = "*" }
@@ -43,7 +42,7 @@ lalrpop = "0.22.1"
 gxhash = "*"
 
 [target.'cfg(not(all(target_feature="aes", target_feature="sse2")))'.dependencies]
-rapidhash = "*"
+rapidhash = { version = "4.5", features = ["std"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv6Addr};
 use std::num::ParseIntError;
 
 use lalrpop_util::{lalrpop_mod, ParseError};
@@ -218,7 +218,7 @@ impl Filter {
             }
         }
     }
-    pub fn parse(s: &str) -> Result<Self, ParseError<usize, Token, FilterParseError>> {
+    pub fn parse<'s>(s: &'s str) -> Result<Self, ParseError<usize, Token<'s>, FilterParseError>> {
         grammar::FilterRootParser::new().parse(s)
     }
 }
@@ -228,7 +228,7 @@ fn deser_regex<'de, D>(deserializer: D) -> Result<Regex, D::Error> where D: Dese
     Regex::new(&s).map_err(serde::de::Error::custom)
 }
 
-fn apply_string_escapes(code: &str, idx0: usize) -> Result<String, lalrpop_util::ParseError<usize, Token, FilterParseError>> {
+fn apply_string_escapes<'s>(code: &'s str, idx0: usize) -> Result<String, lalrpop_util::ParseError<usize, Token<'s>, FilterParseError>> {
     if !code.contains('\\') {
         Ok(code.into())
     } else {

@@ -1,19 +1,14 @@
 use bytes::BytesMut;
-use paste::paste;
 use serde::de::DeserializeOwned;
-use soa_rs::{Soa, Soars};
-use core::slice;
 use std::alloc::Layout;
-use std::io::{self, Cursor};
 use std::ops::Range;
 use pco::wrapped::{FileCompressor, FileDecompressor};
 use anyhow::{bail, Error};
-use better_io::BetterBufRead;
 use serde::{Serialize, Deserialize};
 
 use crate::types::{DataSeries, HashArray};
 use crate::util::WriteAdapter;
-use crate::{types::{HashIpv6, HashStrings, HashStringsOpt, NumberSeries, TimeSeries, StringMap}, util::ReadAdapter, DataBuilder, Options, Pos, RequestEntry,
+use crate::{types::{HashIpv6, HashStrings, HashStringsOpt, NumberSeries, TimeSeries, StringMap}, DataBuilder, Options, RequestEntry,
     slice::{SliceTrait, Owned},
     Input
 };
@@ -36,6 +31,7 @@ const V5: u32 = 5;
 const V6: u32 = 6;
 const SHEMA_VERSION: u32 = V5;
 
+#[allow(unused)]
 #[derive(clog_derive::Shema)]
 pub struct ShemaImpl {
     status: NumberSeries<u16>,
@@ -124,7 +120,7 @@ pub trait Shema: Sized {
         println!("after header reader at {}", reader.pos());
         let (f, reader) = FileDecompressor::new(reader)?;
         println!("after decmpressor reader at {}", reader.pos());
-        let (builder, reader) = Self::read(&f, reader, header.len as usize, header.version)?;
+        let (builder, _reader) = Self::read(&f, reader, header.len as usize, header.version)?;
         Ok(builder)
     }
     #[cfg(feature="encode")]

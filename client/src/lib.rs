@@ -1,9 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     net::Ipv6Addr,
-    ops::Range,
-    str::from_utf8_unchecked,
-    sync::Arc,
+    ops::Range
 };
 
 use clog_core::{
@@ -13,8 +11,7 @@ use clog_core::{
     shema::{self, Shema},
 };
 use clog_ws_api::{ClientMessage, ServerMessage};
-use itertools::intersperse;
-use js_sys::{BigInt, Function, JsString, Object, Uint8Array};
+use js_sys::{BigInt, Function, Uint8Array};
 use time::OffsetDateTime;
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 use web_sys::{BinaryType, Event, MessageEvent, WebSocket};
@@ -67,7 +64,7 @@ impl Client {
     }
     fn send(&self, msg: ClientMessage) {
         let data = postcard::to_stdvec(&msg).unwrap();
-        self.websocket.send_with_u8_array(&data);
+        let _ = self.websocket.send_with_u8_array(&data);
     }
     fn request_more(&mut self, start: u64) {
         if start < self.requested_start {
@@ -83,7 +80,7 @@ impl Client {
     fn maybe_need_more(&mut self, start: u64) {
         self.request_more(start.saturating_sub(1000));
     }
-    pub fn on_open(&mut self, e: Event) {
+    pub fn on_open(&mut self, _: Event) {
         self.send(ClientMessage::SubScribeWithBacklog { backlog: 1000 });
     }
     pub fn on_message(&mut self, event: MessageEvent) -> Option<PacketRange> {
@@ -346,7 +343,7 @@ impl FilterView {
     pub fn scroll_to_end(&mut self, client: &Client) {
         let ctx = FilterCtx::new();
         let filter = &self.filter;
-        let matches = |&(n, ref e): &(u64, BatchEntry)| matches(filter, &ctx, e);
+        let matches = |&(_n, ref e): &(u64, BatchEntry)| matches(filter, &ctx, e);
 
         let end = self.positions.back().cloned().unwrap_or(self.start);
         for (pos, _) in client.get_range(end + 1..u64::MAX).filter(matches) {
@@ -372,7 +369,7 @@ impl FilterView {
     pub fn scroll_by(&mut self, client: &mut Client, by: isize) -> bool {
         let ctx = FilterCtx::new();
         let filter = &self.filter;
-        let matches = |&(n, ref e): &(u64, BatchEntry)| matches(filter, &ctx, e);
+        let matches = |&(_n, ref e): &(u64, BatchEntry)| matches(filter, &ctx, e);
 
         if by > 0 {
             let end = self.positions.back().cloned().unwrap_or(self.start);
@@ -535,7 +532,7 @@ fn matches(filter: &Option<Filter>, ctx: &FilterCtx, e: &BatchEntry) -> bool {
     }
 }
 
-fn format_time(buf: &mut [u8; 20], n: u64) -> ArrayStr {
+fn format_time<'a>(buf: &'a mut [u8; 20], n: u64) -> ArrayStr<'a> {
     use std::fmt::Write;
     let mut s = ArrayStr::new(buf);
     match OffsetDateTime::from_unix_timestamp(n as i64) {
@@ -554,7 +551,7 @@ fn format_time(buf: &mut [u8; 20], n: u64) -> ArrayStr {
     }
     s
 }
-fn format_ip(buf: &mut [u8; 40], ip: Ipv6Addr) -> ArrayStr {
+fn format_ip<'a>(buf: &'a mut [u8; 40], ip: Ipv6Addr) -> ArrayStr<'a> {
     use std::fmt::Write;
 
     let mut s = ArrayStr::new(buf);

@@ -1,9 +1,9 @@
 extern crate proc_macro;
 use proc_macro::TokenStream;
 use syn::{
-    parse_macro_input, Data::Struct, DataStruct, DeriveInput, Expr, Field, Fields, Ident, Path
+    parse_macro_input, DeriveInput, Expr, Ident
 };
-use darling::{ast, util, FromDeriveInput, FromField, FromMeta};
+use darling::{ast, util, FromDeriveInput, FromField};
 use quote::{format_ident, quote};
 
 #[proc_macro_derive(SliceTrait)]
@@ -276,7 +276,6 @@ struct SliceStruct {
 #[darling(attributes(clog))]
 struct Entry {
     ident: Option<syn::Ident>,
-    vis: syn::Visibility,
     ty: syn::Type,
 
     min_version: Option<Expr>,

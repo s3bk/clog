@@ -1,5 +1,5 @@
 use clog_core::{
-    shema::{Builder, ShemaImplBuilder, Shema, BatchEntry},
+    shema::{Builder, ShemaImplBuilder, Shema},
     Options, RequestEntry,
     util::IoWritePos,
     types::compress_string,

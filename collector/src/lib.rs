@@ -1,12 +1,10 @@
 use anyhow::{Error, bail};
 use bytes::{Bytes, BytesMut};
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
-    io::Cursor,
+    collections::BTreeMap ,
     mem::replace,
     ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::PathBuf,
 };
 use tokio::{
     select,
@@ -111,7 +109,7 @@ pub struct LogOptions {
 pub async fn init_log(options: LogOptions) -> Result<(LogCollector, Sender<RequestEntry>), Error> {
     let (client_tx, mut client_rx) = channel(128);
     let (past_tx, past_rx) = channel(128);
-    let (row_tx, row_rx) = broadcast::channel(4096);
+    let (row_tx, _) = broadcast::channel(4096);
     let (event_tx, mut event_rx) = channel::<RequestEntry>(128);
 
     let mut past = PastManager {
@@ -219,7 +217,7 @@ impl CollectorBackend {
         let mut sync_buf = BytesMut::with_capacity(32);
         PacketType::Sync.write_to(&mut sync_buf);
         let sync_buf = postcard::to_extend(&info, sync_buf).unwrap();
-        tx.send(sync_buf.into()).await;
+        let _ = tx.send(sync_buf.into()).await;
     }
     fn get_current(&self, tx: Sender<Bytes>) -> u64 {
         let start = self.current_start;
@@ -346,7 +344,7 @@ impl PastManager {
                         let path = root.join(format!("block-{start}.clog"));
                         let temp_path = path.with_extension("new");
                         if tokio::fs::write(&temp_path, &data).await.is_ok() {
-                            tokio::fs::rename(&temp_path, path).await;
+                            let _ = tokio::fs::rename(&temp_path, path).await;
                         }
                     }
                     self.past_buffers.insert(start, Some(data));

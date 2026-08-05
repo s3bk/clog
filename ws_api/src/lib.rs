@@ -1,5 +1,5 @@
 use bytes::{Bytes, BytesMut};
-use clog_core::{PacketType, SyncHeader};
+use clog_core::{PacketType};
 use serde::{Deserialize, Serialize};
 
 
