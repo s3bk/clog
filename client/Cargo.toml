@@ -14,6 +14,7 @@ serde = { version = "*", features = ["derive"] }
 time = "*"
 hexplay = "*"
 itertools = "*"
+console_error_panic_hook = "*"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

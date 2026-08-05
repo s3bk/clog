@@ -29,7 +29,7 @@ const V3: u32 = 3;
 const V4: u32 = 4;
 const V5: u32 = 5;
 const V6: u32 = 6;
-const SHEMA_VERSION: u32 = V5;
+const SHEMA_VERSION: u32 = V6;
 
 #[allow(unused)]
 #[derive(clog_derive::Shema)]
