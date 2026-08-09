@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::net::{Ipv6Addr};
 use std::num::ParseIntError;
 
+use itertools::Itertools;
 use lalrpop_util::{lalrpop_mod, ParseError};
 use regex::Regex;
 use serde::{Deserialize, Deserializer};
@@ -10,6 +11,15 @@ use crate::Protocol;
 use crate::shema::BatchEntry;
 
 lalrpop_mod!(grammar);
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct FingerprintFilter([u8; 16]);
+impl FingerprintFilter {
+    pub fn matches(&self, fp: [u8; 16]) -> bool {
+        self.0 == fp
+    }
+
+}
 
 #[derive(Debug, Deserialize)]
 pub enum StringFilter {
@@ -57,6 +67,12 @@ impl StringFilter {
             &Self::Similar(ref t, n) => strsim::levenshtein(s, t) <= n,
         }
     }
+    pub fn matches_opt(&self, o: Option<&str>) -> bool {
+        match o {
+            Some(s) => self.matches(s),
+            None => false
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -70,6 +86,15 @@ impl IpBlock {
     }
     fn byte(n: u8) -> Self {
         IpBlock { bits: n, mask: 255 }
+    }
+    fn parse<'s>(s: &'s str) -> Result<IpBlock, ParseError<usize, Token<'s>, FilterParseError>> {
+        match s {
+            "*"=> Ok(IpBlock::any()),
+            s => {
+                let b: u8 = s.parse().map_err(|_| ParseError::User { error: FilterParseError::IpV4 })?;
+                Ok(IpBlock::byte(b))
+            }
+        }
     }
 }
 #[derive(Debug, Deserialize, PartialEq)]
@@ -89,6 +114,15 @@ impl IpFilter {
     pub fn matches(&self, ip: Ipv6Addr) -> bool {
         (ip.to_bits() ^ self.bits) & self.mask == 0
     }
+}
+pub fn parse_ipv4<'s>(s: &'s str) -> Result<IpFilter, ParseError<usize, Token<'s>, FilterParseError>> {
+    let (a, b, c, d) = s.split(".").collect_tuple().ok_or(ParseError::User { error: FilterParseError::IpV4 })?;
+    Ok(IpFilter::ipv4(
+        IpBlock::parse(a)?,
+        IpBlock::parse(b)?,
+        IpBlock::parse(c)?,
+        IpBlock::parse(d)?
+    ))
 }
 
 pub struct FilterCtx {
@@ -179,6 +213,8 @@ pub enum FieldFilter {
     Host(StringFilter),
     Proto(ProtoFilter),
     Header(HeaderFilter),
+    Location(StringFilter),
+    Fingerprint(FingerprintFilter),
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -209,6 +245,8 @@ impl Filter {
                 FieldFilter::Host(f) => f.matches(entry.host),
                 FieldFilter::Proto(f) => f.matches(entry.proto),
                 FieldFilter::Header(f) => f.matches(&entry.headers),
+                FieldFilter::Location(f) => f.matches_opt(entry.location.as_deref()),
+                FieldFilter::Fingerprint(f) => f.matches(entry.tls_fp),
             }
             Filter::Combination(c) => match c {
                 Combinations::Not(f) => !f.matches(ctx, entry),
@@ -254,6 +292,21 @@ fn apply_string_escapes<'s>(code: &'s str, idx0: usize) -> Result<String, lalrpo
         Ok(text.into())
     }
 }
+fn parse_fp(mut s: &str) -> Result<FingerprintFilter, lalrpop_util::ParseError<usize, Token<'static>, FilterParseError>> {
+    if s.len() != 32 {
+        return Err(ParseError::User { error: FilterParseError::HexStringLen { found: s.len(), expected: 32 } });
+    }
+    if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ParseError::User { error: FilterParseError::HexString });
+    }
+    let mut arr = [0; 16];
+    for b in arr.iter_mut() {
+        let (digits, rest) = s.split_at(2);
+        *b = u8::from_str_radix(digits, 16).unwrap();
+        s = rest;
+    }
+    Ok(FingerprintFilter(arr))
+}
 
 fn parse_date(year: u16, month: u8, day: u8) -> Result<Date, lalrpop_util::ParseError<usize, Token<'static>, FilterParseError>> {
     let month = month.try_into().map_err(|_| ParseError::User { error: FilterParseError::Date })?;
@@ -278,6 +331,9 @@ pub enum FilterParseError {
     Regex(regex::Error),
     ParseInt(ParseIntError),
     Date,
+    HexString,
+    HexStringLen { found: usize, expected: usize },
+    IpV4,
 }
 impl std::fmt::Display for FilterParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -285,6 +341,9 @@ impl std::fmt::Display for FilterParseError {
             FilterParseError::Regex(e) => write!(f, "Failed to parse Regex: {e}"),
             FilterParseError::ParseInt(e) => write!(f, "Integer out of range: {e}"),
             FilterParseError::Date => write!(f, "Invalid date"),
+            Self::HexString => write!(f, "invalid hex string"),
+            Self::HexStringLen { found, expected } => write!(f, "invalid hex string length: {found}. expected {expected}."),
+            Self::IpV4 => write!(f, "invalid IPv4"),
         }
     }
 }
@@ -301,7 +360,13 @@ fn test_filter_parser() {
     assert_eq!(Filter::parse(r#"port 80 .. 100 & uri "/api/"*"#), Ok(Filter::Combination(Combinations::And(vec![
         Filter::Field(FieldFilter::Port(NumberFilter::Range(80, 100))), Filter::Field(FieldFilter::Uri(StringFilter::Prefix("/api/".into())))
     ]))));
-    assert_eq!(Filter::parse("ip 1.2.3.4"), Ok(Filter::Field(FieldFilter::Ip(IpFilter { bits: 1234, mask: (1<<32)-1 }))));
+    assert_eq!(Filter::parse("ip 1.2.3.4"), Ok(Filter::Field(FieldFilter::Ip(IpFilter { bits: 0xffff01020304, mask: u128::MAX }))));
+    assert_eq!(Filter::parse("loc de"), Ok(Filter::Field(FieldFilter::Location(StringFilter::Equals("de".into())))));
+    assert_eq!(
+        Filter::parse("fp 0123456789abcdef0123456789abcdef"),
+        Ok(Filter::Field(FieldFilter::Fingerprint(FingerprintFilter([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]))))
+    );
+
 }
 #[test]
 fn test_lit_parser() {

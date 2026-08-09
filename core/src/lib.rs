@@ -3,6 +3,7 @@ use std::{io, net::IpAddr, usize};
 
 use better_io::BetterBufRead;
 use bytes::{BufMut, Bytes, BytesMut};
+use http::header::{ACCEPT, REFERER};
 use istring::SmallString;
 use pco::wrapped::{FileCompressor, FileDecompressor};
 use anyhow::{Error};
@@ -87,6 +88,18 @@ impl<'a> From<&'a http::HeaderMap> for Headers {
 impl Headers {
     pub fn split(&self) -> Vec<(&str, &str)> {
         self.0.split("\n").filter_map(|s| s.split_once(":")).collect()
+    }
+}
+
+#[test]
+fn test_headers() {
+    let mut m = http::HeaderMap::new();
+    m.insert(REFERER, "https://qdat.net/foo".parse().unwrap());
+    m.insert(ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".parse().unwrap());
+
+    let h = Headers::from(&m);
+    for (k, v) in h.split() {
+        assert_eq!(m.get(k).unwrap().to_str().unwrap(), v);
     }
 }
 

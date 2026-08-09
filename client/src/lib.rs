@@ -129,7 +129,7 @@ impl Client {
                 chunk
                     .range(start..end)
                     .enumerate()
-                    .map(move |(i, e)| ((i + start) as u64 + n, e))
+                    .filter_map(move |(i, e)| Some(((i + start) as u64 + n, e.ok()?)))
             })
     }
     pub fn get(&self, n: u64) -> JsValue {

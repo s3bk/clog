@@ -99,7 +99,7 @@ pub async fn handle_ws(ws: WebSocket, log: LogCollector) {
                 else => {
                     break
                 }
-            }   
+            }
         } else {
             select! {
                 Some(Ok(msg)) = state.ws.recv() => {
@@ -115,4 +115,3 @@ pub async fn handle_ws(ws: WebSocket, log: LogCollector) {
         }
     }
 }
-

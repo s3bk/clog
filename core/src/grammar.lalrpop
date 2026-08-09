@@ -11,6 +11,7 @@ extern {
 
 match {
     r"\d+" => Num,
+    r"(\d{1,3}|\*)\.(\d{1,3}|\*)\.(\d{1,3}|\*)\.(\d{1,3}|\*)" => IpAddr,
     "." => ".",
     "*" => "*",
 } else {
@@ -57,13 +58,7 @@ ProtoFilter: ProtoFilter = {
     "https" => ProtoFilter::Https,
 };
 
-IpBlock: IpBlock = {
-    "*" => IpBlock::any(),
-    <n:NumU8> => IpBlock::byte(n)
-}
-IpFilter: IpFilter = {
-    <a:IpBlock> "." <b:IpBlock> "." <c:IpBlock> "." <d:IpBlock> => IpFilter::ipv4(a, b, c, d),
-}
+IpFilter: IpFilter = <s:IpAddr> =>? parse_ipv4(s);
 
 TimeUnit: u32 = {
     "s" => 1,
@@ -79,6 +74,7 @@ Time: Time = {
     <h:NumU8> ":" <m:NumU8> =>? parse_time(h, m, 0),
     <h:NumU8> ":" <m:NumU8> ":" <s:NumU8> =>? parse_time(h, m, s),
 };
+FingerprintFilter: FingerprintFilter = <s:String> =>? parse_fp(s);
 
 #[inline]
 TimeSpec: TimeSpec = {
@@ -111,6 +107,8 @@ Field: FieldFilter = {
     "port" <f:NumberFilter> => FieldFilter::Port(f),
     "host" <f:StringFilter> => FieldFilter::Host(f),
     "proto" <f:ProtoFilter> => FieldFilter::Proto(f),
+    "loc" <f:StringFilter> => FieldFilter::Location(f),
+    "fp" <f:FingerprintFilter> => FieldFilter::Fingerprint(f),
     <h:SimpleLit> <f:StringFilter> => FieldFilter::Header(HeaderFilter::new(&h, f)),
 };
 

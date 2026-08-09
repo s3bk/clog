@@ -80,7 +80,7 @@ pub trait Shema: Sized {
     fn add(&mut self, item: Self::Item<'_>);
     fn get(&self, idx: usize) -> Option<Self::Item<'_>>;
 
-    fn decompress(&self, c: <Self::Fields as SliceTrait>::Elem) -> Self::Item<'_>;
+    fn decompress(&self, c: <Self::Fields as SliceTrait>::Elem) -> Result<Self::Item<'_>, &'static str>;
     fn fields(&self) -> &Owned<Self::Fields>;
 
     #[cfg(feature="encode")]
@@ -88,10 +88,10 @@ pub trait Shema: Sized {
     fn read<'a>(f: &FileDecompressor, data: Input<'a>, len: usize, version: u32) -> Result<(Self, Input<'a>), Error>;
     fn reserve(&mut self, additional: usize);
 
-    fn iter(&self) -> impl Iterator<Item=Self::Item<'_>> + ExactSizeIterator {
+    fn iter(&self) -> impl Iterator<Item=Result<Self::Item<'_>, &'static str>> + ExactSizeIterator {
         self.fields().iter().map(|i| self.decompress(i))
     }
-    fn range(&self, range: Range<usize>) -> impl Iterator<Item=Self::Item<'_>> + ExactSizeIterator + DoubleEndedIterator + '_ {
+    fn range(&self, range: Range<usize>) -> impl Iterator<Item=Result<Self::Item<'_>, &'static str>> + ExactSizeIterator + DoubleEndedIterator + '_ {
         self.fields().iter().skip(range.start).take(range.end - range.start).map(|i| self.decompress(i))
     }
 
@@ -113,13 +113,13 @@ pub trait Shema: Sized {
     fn from_slice(data: &[u8]) -> Result<Self, Error> {
         let input = Input::new(data);
         let (header, reader) = decode::<Header>(input)?;
-        println!("header: {header:?}");
+        //println!("header: {header:?}");
         if header.version > SHEMA_VERSION {
             bail!("found version {} but compiled with version {}", header.version, SHEMA_VERSION);
         }
-        println!("after header reader at {}", reader.pos());
+        //println!("after header reader at {}", reader.pos());
         let (f, reader) = FileDecompressor::new(reader)?;
-        println!("after decmpressor reader at {}", reader.pos());
+        //println!("after decmpressor reader at {}", reader.pos());
         let (builder, _reader) = Self::read(&f, reader, header.len as usize, header.version)?;
         Ok(builder)
     }

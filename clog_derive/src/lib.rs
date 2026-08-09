@@ -197,10 +197,10 @@ pub fn derive_shema_fn(input: TokenStream) -> TokenStream {
                     #( #idents: self.#idents.get(compressed.#idents)? ),*
                 })
             }
-            fn decompress(&self, c: <#fields_ident as SliceTrait>::Elem) -> #item_ident {
-                #item_ident {
-                    #( #idents: self.#idents.get(c.#idents).expect(stringify!(#idents)) ),*
-                }
+            fn decompress(&self, c: <#fields_ident as SliceTrait>::Elem) -> Result<#item_ident, &'static str> {
+                Ok(#item_ident {
+                    #( #idents: self.#idents.get(c.#idents).ok_or(stringify!(#idents))? ),*
+                })
             }
 
             #[cfg(feature="encode")]
@@ -230,17 +230,22 @@ pub fn derive_shema_fn(input: TokenStream) -> TokenStream {
                 soa.reserve(len as usize);
                 soa.extend(std::iter::repeat(Default::default()).take(len as usize));
 
+                let mut ok = true;
                 let #data_slice_mut_ident {
                     #( #idents ),*
                 } = soa.slice_mut();
                 #(
                     //println!("FIELD {}", stringify!(#idents));
-                    let (#idents, data) = if #version_check {
+                    let (#idents, data) = if ok && #version_check {
                         //println!("    header at {}", data.pos());
-                        let (field_size, data) = clog::shema::decode(data)?;
-
-                        //println!("    data at {}", data.pos());
-                        <#types as DataBuilder>::read(f, #idents, data, field_size)?
+                        let start = data.clone();
+                        if let Ok((field_size, data)) = clog::shema::decode(data) {
+                            //println!("    data at {}", data.pos());
+                            <#types as DataBuilder>::read(f, #idents, data, field_size)?
+                        } else {
+                            ok = false;
+                            (Default::default(), start)
+                        }
                     } else {
                         //println!("    skipped");
                         (Default::default(), data)

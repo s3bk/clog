@@ -429,7 +429,7 @@ impl<const N: usize> DataBuilder for HashArray<N> {
         Ok((HashArray { values }, reader))
     }
     fn get<'a>(&'a self, idx: Self::CompressedItem) -> Option<Self::Item<'a>> {
-        let &value = self.values.get_index(idx as usize)?;
+        let value = self.values.get_index(idx as usize).cloned().unwrap_or([0; N]);
         Some(value)
     }
 }
@@ -580,7 +580,7 @@ fn compress_slice<'a, T: Number, W: io::Write + Pos>(f: &FileCompressor, writer:
 }
 
 fn decompress_slice<'a, 'r, T: Number>(f: &FileDecompressor, reader: Input<'r>, slice: &'a mut [T]) -> Result<Input<'r>, Error> {
-    println!("read [{}; {}] at {}", std::any::type_name::<T>(), slice.len(), reader.pos());
+    // println!("read [{}; {}] at {}", std::any::type_name::<T>(), slice.len(), reader.pos());
     if slice.len() == 0 {
         return Ok(reader);
     }

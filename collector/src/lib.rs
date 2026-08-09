@@ -422,6 +422,21 @@ impl PastManager {
 
 #[test]
 fn test_batch() {
-    let data = std::fs::read("../logs/block-1540000.clog").unwrap();
-    decode_batch(&data).unwrap();
+    let mut list = vec![];
+    for e in std::fs::read_dir("../logs").unwrap().filter_map(|r| r.ok()) {
+        if e.file_type().map_or(false, |t| t.is_file()) {
+            let n: Option<u64> = e.file_name().to_str().and_then(|s| s.strip_prefix("block-")).and_then(|s| s.strip_suffix(".clog")).and_then(|s| s.parse().ok());
+            if let Some(n) = n {
+                list.push(n);
+            }
+        }
+    }
+
+    list.sort_unstable();
+    for n in list {
+        let path = format!("../logs/block-{n}.clog");
+        println!("{path}");
+        let data = std::fs::read(&path).unwrap();
+        decode_batch(&data).unwrap();
+    }
 }

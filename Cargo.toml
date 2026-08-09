@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 
-members = [
+members = ["analytics",
     "client", "clog_derive", "clog_utils", "collector",
     "core",
     "ws_api",
